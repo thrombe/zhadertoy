@@ -1,5 +1,5 @@
 .{
-    .name = "zhader_test",
+    .name = "mach-test",
     .version = "0.0.0",
 
     .dependencies = .{
