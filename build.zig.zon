@@ -1,0 +1,22 @@
+.{
+    .name = "zhader_test",
+    .version = "0.0.0",
+
+    .dependencies = .{
+        .mach = .{
+            .url = "https://github.com/hexops/mach/archive/refs/heads/0.4.tar.gz",
+            .hash = "1220203cdb9c66998abf55c99d4c84a78f11a7d0db2992adf3840a24f2d2bb829edc",
+        },
+    },
+
+    // Specifies the set of files and directories that are included in this package.
+    // Only files and directories listed here are included in the `hash` that
+    // is computed for this package.
+    // Paths are relative to the build root. Use the empty string (`""`) to refer to
+    // the build root itself.
+    // A directory listed here means that all files within, recursively, are included.
+    .paths = .{
+        // This makes *all* files, recursively, included in this package.
+        "",
+    },
+}
