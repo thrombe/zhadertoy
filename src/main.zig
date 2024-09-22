@@ -8,8 +8,6 @@ const gpu = mach.wgpu;
 // The global list of Mach modules registered for use in our application.
 pub const modules = .{
     mach.Core,
-    // @import("App.zig"),
-    // @import("Renderer.zig"),
     App,
     Renderer,
 };
