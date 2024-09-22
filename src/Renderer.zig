@@ -3,7 +3,7 @@
 const std = @import("std");
 
 const mach = @import("mach");
-const gpu = mach.gpu;
+const gpu = mach.wgpu;
 const math = mach.math;
 
 const Vec3 = math.Vec3;
@@ -41,14 +41,15 @@ fn init(
     core: *mach.Core.Mod,
     renderer: *Mod,
 ) !void {
-    const device = core.state().device;
+    const state: *mach.Core = core.state();
+    const device = state.device;
     const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
     defer shader_module.release();
 
     // Fragment state
     const blend = gpu.BlendState{};
     const color_target = gpu.ColorTargetState{
-        .format = core.get(core.state().main_window, .framebuffer_format).?,
+        .format = core.get(state.main_window, .framebuffer_format).?,
         .blend = &blend,
         .write_mask = gpu.ColorWriteMaskFlags.all,
     };
@@ -57,6 +58,10 @@ fn init(
         .entry_point = "frag_main",
         .targets = &.{color_target},
     });
+    const vertex = gpu.VertexState{
+        .module = shader_module,
+        .entry_point = "vertex_main",
+    };
 
     const label = @tagName(name) ++ ".init";
     const uniform_buffer = device.createBuffer(&.{
@@ -82,10 +87,7 @@ fn init(
                 .label = label,
                 .layout = bind_group_layout,
                 .entries = &.{
-                    if (mach.use_sysgpu)
-                        gpu.BindGroup.Entry.buffer(0, uniform_buffer, uniform_offset * i, @sizeOf(UniformBufferObject), @sizeOf(UniformBufferObject))
-                    else
-                        gpu.BindGroup.Entry.buffer(0, uniform_buffer, uniform_offset * i, @sizeOf(UniformBufferObject)),
+                    gpu.BindGroup.Entry.buffer(0, uniform_buffer, uniform_offset * i, @sizeOf(UniformBufferObject)),
                 },
             }),
         );
@@ -102,10 +104,7 @@ fn init(
         .label = label,
         .fragment = &fragment,
         .layout = pipeline_layout,
-        .vertex = gpu.VertexState{
-            .module = shader_module,
-            .entry_point = "vertex_main",
-        },
+        .vertex = vertex,
     });
 
     renderer.init(.{
@@ -125,9 +124,12 @@ fn deinit(
 
 fn renderFrame(
     entities: *mach.Entities.Mod,
-    core: *mach.Core.Mod,
+    core_mod: *mach.Core.Mod,
     renderer: *Mod,
 ) !void {
+    const self: *@This() = renderer.state();
+    const core: *mach.Core = core_mod.state();
+    const device: *gpu.Device = core.device;
     // Grab the back buffer of the swapchain
     // TODO(Core)
     const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
@@ -135,7 +137,7 @@ fn renderFrame(
 
     // Create a command encoder
     const label = @tagName(name) ++ ".tick";
-    const encoder = core.state().device.createCommandEncoder(&.{ .label = label });
+    const encoder = device.createCommandEncoder(&.{ .label = label });
     defer encoder.release();
 
     // Update uniform buffer
@@ -150,13 +152,13 @@ fn renderFrame(
                 .offset = position,
                 .scale = scale,
             };
-            encoder.writeBuffer(renderer.state().uniform_buffer, uniform_offset * num_entities, &[_]UniformBufferObject{ubo});
+            encoder.writeBuffer(self.uniform_buffer, uniform_offset * num_entities, &[_]UniformBufferObject{ubo});
             num_entities += 1;
         }
     }
 
     // Begin render pass
-    const sky_blue_background = gpu.Color{ .r = 0.776, .g = 0.988, .b = 1, .a = 1 };
+    const sky_blue_background = gpu.Color{ .r = 40.0 / 255.0, .g = 40.0 / 255.0, .b = 40.0 / 255.0, .a = 1 };
     const color_attachments = [_]gpu.RenderPassColorAttachment{.{
         .view = back_buffer_view,
         .clear_value = sky_blue_background,
@@ -170,8 +172,8 @@ fn renderFrame(
     defer render_pass.release();
 
     // Draw
-    for (renderer.state().bind_groups[0..num_entities]) |bind_group| {
-        render_pass.setPipeline(renderer.state().pipeline);
+    for (self.bind_groups[0..num_entities]) |bind_group| {
+        render_pass.setPipeline(self.pipeline);
         render_pass.setBindGroup(0, bind_group, &.{0});
         render_pass.draw(3, 1, 0, 0);
     }
@@ -182,8 +184,8 @@ fn renderFrame(
     // Submit our commands to the queue
     var command = encoder.finish(&.{ .label = label });
     defer command.release();
-    core.state().queue.submit(&[_]*gpu.CommandBuffer{command});
+    core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
     // Present the frame
-    core.schedule(.present_frame);
+    core_mod.schedule(.present_frame);
 }
