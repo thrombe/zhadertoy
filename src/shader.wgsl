@@ -39,5 +39,5 @@ fn frag_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let width = f32(state.display_width);
     let height = f32(state.display_height);
 
-    return vec4<f32>(state.cursor_x/width, state.cursor_y/height, 0.0, 0.0);
+    return vec4<f32>(state.cursor_x/width, state.cursor_y/height, state.time/10.0 % 1.0, 0.0);
 }

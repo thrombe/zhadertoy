@@ -40,6 +40,8 @@ const Renderer = struct {
     // uniform bind group offset must be 256-byte aligned
     const uniform_offset = 256;
 
+    timer: mach.Timer,
+
     bind_group: *gpu.BindGroup,
     pipeline: *gpu.RenderPipeline,
     uniform_buffer: *gpu.Buffer,
@@ -130,6 +132,8 @@ const Renderer = struct {
         });
 
         self_mod.init(.{
+            .timer = try mach.Timer.start(),
+
             .bind_group = bind_group,
             .pipeline = pipeline,
             .uniform_buffer = uniform_buffer,
@@ -189,6 +193,8 @@ const Renderer = struct {
 
         const self: *@This() = self_mod.state();
 
+        self.state.time += self.timer.lap();
+
         var iter = mach.core.pollEvents();
         while (iter.next()) |event| {
             switch (event) {
@@ -229,6 +235,9 @@ const Renderer = struct {
                 },
                 .key_press => |ev| {
                     switch (ev.key) {
+                        .escape => {
+                            core_mod.schedule(.exit);
+                        },
                         else => {},
                     }
                 },
@@ -252,13 +261,11 @@ const Renderer = struct {
 
 const App = struct {
     pub const name = .app;
-
     pub const systems = .{
         .init = .{ .handler = init },
         .deinit = .{ .handler = deinit },
         .tick = .{ .handler = tick },
     };
-
     pub const Mod = mach.Mod(@This());
 
     fn init(
