@@ -27,17 +27,15 @@ const Renderer = struct {
         render_height: u32,
         display_width: u32,
         display_height: u32,
-        windowless: u32,
-        time: f32,
-        cursor_x: f32,
-        cursor_y: f32,
-        scroll: f32,
+        windowless: u32 = 0,
+        time: f32 = 0.0,
+        cursor_x: f32 = 0.0,
+        cursor_y: f32 = 0.0,
+        scroll: f32 = 0.0,
 
-        // TODO: figure out how to send bool or compress this into a single variable
-        // can shove inside a u32 and do (variable & u32(<2^n>)) to get it out
-        mouse_left: u32,
-        mouse_right: u32,
-        mouse_middle: u32,
+        mouse_left: u32 = 0,
+        mouse_right: u32 = 0,
+        mouse_middle: u32 = 0,
     };
     // uniform bind group offset must be 256-byte aligned
     const uniform_offset = 256;
@@ -88,7 +86,17 @@ const Renderer = struct {
             .mapped_at_creation = .false,
         });
 
-        const bind_group_layout_entry = gpu.BindGroupLayout.Entry.buffer(0, .{ .vertex = true }, .uniform, true, 0);
+        const bind_group_layout_entry = gpu.BindGroupLayout.Entry.buffer(
+            0,
+            .{
+                .vertex = true,
+                .fragment = true,
+                .compute = true,
+            },
+            .uniform,
+            true,
+            0,
+        );
         const bind_group_layout = device.createBindGroupLayout(
             &gpu.BindGroupLayout.Descriptor.init(.{
                 .label = label,
@@ -125,7 +133,12 @@ const Renderer = struct {
             .bind_group = bind_group,
             .pipeline = pipeline,
             .uniform_buffer = uniform_buffer,
-            .state = std.mem.zeroes(StateUniform),
+            .state = .{
+                .render_width = core_mod.get(core.main_window, .width).?,
+                .render_height = core_mod.get(core.main_window, .height).?,
+                .display_width = core_mod.get(core.main_window, .height).?,
+                .display_height = core_mod.get(core.main_window, .height).?,
+            },
         });
     }
 
@@ -168,16 +181,69 @@ const Renderer = struct {
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
-        // Present the frame
         core_mod.schedule(.present_frame);
     }
 
-    fn tick(self_mod: *Mod) !void {
-        self_mod.schedule(.render_frame);
+    fn tick(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+        defer self_mod.schedule(.render_frame);
+
+        const self: *@This() = self_mod.state();
 
         var iter = mach.core.pollEvents();
         while (iter.next()) |event| {
             switch (event) {
+                .mouse_motion => |pos| {
+                    self.state.cursor_x = @floatCast(pos.pos.x);
+                    self.state.cursor_y = @floatCast(pos.pos.y);
+                },
+                .mouse_press => |button| {
+                    switch (button.button) {
+                        .left => {
+                            self.state.mouse_left = 1;
+                        },
+                        .right => {
+                            self.state.mouse_right = 1;
+                        },
+                        .middle => {
+                            self.state.mouse_middle = 1;
+                        },
+                        else => {},
+                    }
+                },
+                .mouse_release => |button| {
+                    switch (button.button) {
+                        .left => {
+                            self.state.mouse_left = 0;
+                        },
+                        .right => {
+                            self.state.mouse_right = 0;
+                        },
+                        .middle => {
+                            self.state.mouse_middle = 0;
+                        },
+                        else => {},
+                    }
+                },
+                .mouse_scroll => |del| {
+                    self.state.scroll += del.yoffset;
+                },
+                .key_press => |ev| {
+                    switch (ev.key) {
+                        else => {},
+                    }
+                },
+                .key_release => |ev| {
+                    switch (ev.key) {
+                        else => {},
+                    }
+                },
+                .framebuffer_resize => |sze| {
+                    self.state.render_height = sze.height;
+                    self.state.render_width = sze.width;
+                    self.state.display_height = sze.height;
+                    self.state.display_width = sze.width;
+                },
+                .close => core_mod.schedule(.exit),
                 else => {},
             }
         }
@@ -203,6 +269,7 @@ const App = struct {
         core_mod.schedule(.init);
         defer core_mod.schedule(.start);
 
+        // NOTE: core should be initialized before renderer
         renderer_mod.schedule(.init);
 
         self_mod.init(.{});
@@ -215,28 +282,11 @@ const App = struct {
 
     fn tick(
         renderer_mod: *Renderer.Mod,
-        core_mod: *mach.Core.Mod,
     ) !void {
         renderer_mod.schedule(.tick);
 
-        var iter = mach.core.pollEvents();
-
-        while (iter.next()) |event| {
-            switch (event) {
-                .key_press => |ev| {
-                    switch (ev.key) {
-                        else => {},
-                    }
-                },
-                .key_release => |ev| {
-                    switch (ev.key) {
-                        else => {},
-                    }
-                },
-                .close => core_mod.schedule(.exit),
-                else => {},
-            }
-        }
+        // NOOOO: can't poll events in multiple systems (it consumes)
+        // var iter = mach.core.pollEvents();
     }
 };
 

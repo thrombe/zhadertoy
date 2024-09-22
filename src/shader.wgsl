@@ -1,11 +1,25 @@
-// struct Uniform {
-//     pos: vec4<f32>,
-// 	scale: f32,
-// };
+struct StateUniform {
+    render_width: u32,
+    render_height: u32,
+    display_width: u32,
+    display_height: u32,
+    windowless: u32,
 
-// @group(0) @binding(0) var<uniform> in : Uniform;
+    time: f32,
+    cursor_x: f32,
+    cursor_y: f32,
 
-@vertex fn vertex_main(
+    scroll: f32,
+    mouse_left: u32,
+    mouse_right: u32,
+    mouse_middle: u32,
+};
+
+@group(0) @binding(0)
+var<uniform> state: StateUniform;
+
+@vertex
+fn vertex_main(
     @builtin(vertex_index) VertexIndex : u32
 ) -> @builtin(position) vec4<f32> {
     var positions = array<vec3<f32>, 6>(
@@ -20,6 +34,10 @@
     return vec4<f32>(pos, 1.0);
 }
 
-@fragment fn frag_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 0.0, 0.0, 0.0);
+@fragment
+fn frag_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let width = f32(state.display_width);
+    let height = f32(state.display_height);
+
+    return vec4<f32>(state.cursor_x/width, state.cursor_y/height, 0.0, 0.0);
 }
