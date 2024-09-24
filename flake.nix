@@ -83,12 +83,15 @@
           # - [river.nix nixpkgs](https://github.com/NixOS/nixpkgs/blob/nixos-unstable/pkgs/applications/window-managers/river/default.nix#L41)
           zig
           zls
+          gdb
 
           # - [nixOS usage | Mach: zig game engine & graphics toolkit](https://machengine.org/about/nixos-usage/)
           xorg.libX11
           vulkan-loader
         ])
         ++ [
+          pkgs.glslang
+          pkgs.shaderc
         ]
         ++ (custom-commands pkgs);
 

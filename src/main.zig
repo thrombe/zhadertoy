@@ -12,6 +12,9 @@ pub const modules = .{
     Renderer,
 };
 
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var allocator = gpa.allocator();
+
 const Renderer = struct {
     pub const name = .renderer;
     pub const systems = .{
@@ -299,9 +302,132 @@ const App = struct {
 
 // TODO: move this to a mach "entrypoint" zig module
 pub fn main() !void {
+    try Glslc.testfn();
+
     // Initialize mach core
     try mach.core.initModule();
 
     // Main loop
     while (try mach.core.tick()) {}
 }
+
+const Glslc = struct {
+    fn testfn() !void {
+        const compiler = Compiler{
+            .opt = .fast,
+            .stage = .fragment,
+        };
+        const shader: []const u8 = @embedFile("shader.glsl");
+        const bytes = try compiler.compile(allocator, shader, .assembly);
+        defer allocator.free(bytes);
+
+        std.debug.print("{s}\n", .{bytes});
+    }
+
+    const Compiler = struct {
+        opt: enum {
+            none,
+            small,
+            fast,
+        } = .none,
+        lang: enum {
+            glsl,
+            hlsl,
+        } = .glsl,
+        stage: enum {
+            vertex,
+            fragment,
+            compute,
+        } = .fragment,
+        const OutputType = enum {
+            assembly,
+            spirv,
+        };
+
+        fn compile(self: @This(), alloc: std.mem.Allocator, code: []const u8, comptime output_type: OutputType) !(switch (output_type) {
+            .spirv => []u32,
+            .assembly => []u8,
+        }) {
+            var args = std.ArrayList([]const u8).init(alloc);
+            defer {
+                for (args.items) |arg| {
+                    alloc.free(arg);
+                }
+                args.deinit();
+            }
+            try args.append(try alloc.dupe(u8, @as([]const u8, "glslc")));
+            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-fshader-stage={s}", .{switch (self.stage) {
+                .fragment => "fragment"[0..],
+                .vertex => "vertex"[0..],
+                .compute => "compute"[0..],
+            }})));
+            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-x{s}", .{switch (self.lang) {
+                .glsl => @as([]const u8, "glsl"),
+                .hlsl => @as([]const u8, "hlsl"),
+            }})));
+            if (output_type == .assembly) {
+                try args.append(try alloc.dupe(u8, @as([]const u8, "-S")));
+            }
+            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-O{s}", .{switch (self.opt) {
+                .fast => @as([]const u8, ""),
+                .small => @as([]const u8, "s"),
+                .none => @as([]const u8, "0"),
+            }})));
+            try args.append(try alloc.dupe(u8, @as([]const u8, "-o-")));
+            try args.append(try alloc.dupe(u8, @as([]const u8, "-")));
+
+            var child = std.process.Child.init(args.items, alloc);
+            child.stdin_behavior = .Pipe;
+            child.stdout_behavior = .Pipe;
+            child.stderr_behavior = .Pipe;
+
+            try child.spawn();
+
+            const stdin = child.stdin orelse return error.NoStdin;
+            child.stdin = null;
+            const stdout = child.stdout orelse return error.NoStdout;
+            child.stdout = null;
+            const stderr = child.stderr orelse return error.NoStderr;
+            child.stderr = null;
+            defer stdout.close();
+            defer stderr.close();
+
+            try stdin.writeAll(code);
+            stdin.close();
+
+            const err = try child.wait();
+            errdefer {
+                const msg = stderr.readToEndAlloc(alloc, 10 * 1000) catch unreachable;
+                std.debug.print("{s}\n", .{msg});
+                alloc.free(msg);
+            }
+            switch (err) {
+                .Exited => |e| {
+                    if (e != 0) {
+                        std.debug.print("exited with code: {}\n", .{e});
+                        return error.GlslcErroredOut;
+                    }
+                },
+                // .Signal => |code| {},
+                // .Stopped => |code| {},
+                // .Unknown => |code| {},
+                else => |e| {
+                    std.debug.print("exited with code: {}\n", .{e});
+                    return error.GlslcErroredOut;
+                },
+            }
+
+            const bytes = try stdout.readToEndAllocOptions(
+                alloc,
+                100 * 1000,
+                null,
+                4,
+                null,
+            );
+            return switch (output_type) {
+                .spirv => @ptrCast(@alignCast(bytes)),
+                .assembly => bytes,
+            };
+        }
+    };
+};
