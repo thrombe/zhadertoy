@@ -187,6 +187,7 @@ const Renderer = struct {
         x: f32,
         y: f32,
         z: f32,
+        w: f32 = 0.0,
     };
     const ShadertoyUniforms = struct {
         time: *Buffer(f32),
@@ -224,10 +225,10 @@ const Renderer = struct {
             .display_width = core_mod.get(core.main_window, .height).?,
             .display_height = core_mod.get(core.main_window, .height).?,
         };
-        const buffer = try Buffer(StateUniform).new(@tagName(name), state, allocator, device);
+        const buffer = try Buffer(StateUniform).new(@tagName(name) ++ "custom state", state, allocator, device);
         const st_buffers = ShadertoyUniforms{
-            .time = try Buffer(f32).new(@tagName(name), 0.0, allocator, device),
-            .resolution = try Buffer(Vec3).new(@tagName(name), Vec3{
+            .time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device),
+            .resolution = try Buffer(Vec3).new(@tagName(name) ++ " resolution", Vec3{
                 .x = @floatFromInt(core_mod.get(core.main_window, .width).?),
                 .y = @floatFromInt(core_mod.get(core.main_window, .height).?),
                 .z = 0.0,
@@ -255,7 +256,7 @@ const Renderer = struct {
         const vert = @embedFile("vert.glsl");
         var compiler = Glslc.Compiler{ .opt = .fast };
         compiler.stage = .vertex;
-        try compiler.dump_assembly(allocator, vert);
+        // try compiler.dump_assembly(allocator, vert);
         const vertex_bytes = try compiler.compile(allocator, vert, .spirv);
         defer allocator.free(vertex_bytes);
         const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
@@ -269,7 +270,7 @@ const Renderer = struct {
 
         const frag = @embedFile("frag.glsl");
         compiler.stage = .fragment;
-        try compiler.dump_assembly(allocator, frag);
+        // try compiler.dump_assembly(allocator, frag);
         const frag_bytes = try compiler.compile(allocator, frag, .spirv);
         defer allocator.free(frag_bytes);
         const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
@@ -331,7 +332,6 @@ const Renderer = struct {
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
-        // encoder.writeBuffer(self.uniform_buffer, 0, &[_]StateUniform{self.state});
         self.binding.update(encoder);
 
         const sky_blue_background = gpu.Color{ .r = 40.0 / 255.0, .g = 40.0 / 255.0, .b = 40.0 / 255.0, .a = 1 };
@@ -518,6 +518,7 @@ const Glslc = struct {
         };
 
         fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: []const u8) !void {
+            // std.debug.print("{s}\n", .{code});
             const bytes = try self.compile(alloc, code, .assembly);
             defer alloc.free(bytes);
             std.debug.print("{s}\n", .{bytes});
@@ -536,22 +537,22 @@ const Glslc = struct {
             }
             try args.append(try alloc.dupe(u8, @as([]const u8, "glslc")));
             try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-fshader-stage={s}", .{switch (self.stage) {
-                .fragment => "fragment"[0..],
-                .vertex => "vertex"[0..],
-                .compute => "compute"[0..],
+                .fragment => "fragment",
+                .vertex => "vertex",
+                .compute => "compute",
             }})));
             try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-x{s}", .{switch (self.lang) {
-                .glsl => @as([]const u8, "glsl"),
-                .hlsl => @as([]const u8, "hlsl"),
+                .glsl => "glsl",
+                .hlsl => "hlsl",
+            }})));
+            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "{s}", .{switch (self.opt) {
+                .fast => "-O",
+                .small => "-Os",
+                .none => "-O0",
             }})));
             if (output_type == .assembly) {
                 try args.append(try alloc.dupe(u8, @as([]const u8, "-S")));
             }
-            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-O{s}", .{switch (self.opt) {
-                .fast => @as([]const u8, ""),
-                .small => @as([]const u8, "s"),
-                .none => @as([]const u8, "0"),
-            }})));
             try args.append(try alloc.dupe(u8, @as([]const u8, "-o-")));
             try args.append(try alloc.dupe(u8, @as([]const u8, "-")));
 
@@ -576,7 +577,7 @@ const Glslc = struct {
 
             const err = try child.wait();
             errdefer {
-                const msg = stderr.readToEndAlloc(alloc, 10 * 1000) catch unreachable;
+                const msg = stderr.readToEndAlloc(alloc, 1000 * 1000) catch unreachable;
                 std.debug.print("{s}\n", .{msg});
                 alloc.free(msg);
             }
@@ -598,7 +599,7 @@ const Glslc = struct {
 
             const bytes = try stdout.readToEndAllocOptions(
                 alloc,
-                100 * 1000,
+                1000 * 1000,
                 null,
                 4,
                 null,
