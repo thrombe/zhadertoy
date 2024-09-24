@@ -331,7 +331,8 @@ const App = struct {
 
 // TODO: move this to a mach "entrypoint" zig module
 pub fn main() !void {
-    try Glslc.testfn();
+    // try Shaderc.testfn();
+    // try Glslc.testfn();
 
     // Initialize mach core
     try mach.core.initModule();
@@ -465,4 +466,64 @@ const Glslc = struct {
             };
         }
     };
+};
+
+const Shaderc = struct {
+    const C = @cImport({
+        @cInclude("shaderc/shaderc.h");
+    });
+
+    const Shader = struct {
+        result: *C.struct_shaderc_compilation_result,
+
+        pub fn deinit(self: *@This()) void {
+            C.shaderc_result_release(self.result);
+        }
+
+        /// owned by Shader
+        pub fn bytes(self: *@This()) []const u32 {
+            const len = C.shaderc_result_get_length(self.result);
+            const res = C.shaderc_result_get_bytes(self.result)[0..len];
+            // alignment guranteed when it is spirv
+            return @ptrCast(@alignCast(res));
+        }
+    };
+
+    pub fn testfn() !void {
+        const shader = @embedFile("frag.glsl");
+        // std.debug.print("{s}\n", .{shader.ptr[0..shader.len]});
+
+        const compiler = C.shaderc_compiler_initialize() orelse return error.CouldNotInitShaderc;
+        defer C.shaderc_compiler_release(compiler);
+
+        const options = C.shaderc_compile_options_initialize() orelse return error.CouldNotInitShaderc;
+        defer C.shaderc_compile_options_release(options);
+
+        C.shaderc_compile_options_set_optimization_level(options, C.shaderc_optimization_level_performance);
+        C.shaderc_compile_options_set_source_language(options, C.shaderc_source_language_glsl);
+        // C.shaderc_compile_options_set_vulkan_rules_relaxed(options, true);
+
+        const result = C.shaderc_compile_into_spv_assembly(
+            compiler,
+            shader.ptr,
+            shader.len,
+            C.shaderc_glsl_fragment_shader,
+            "frag.glsl",
+            "main",
+            options,
+        ) orelse return error.CouldNotCompileShader;
+        errdefer C.shaderc_result_release(result);
+
+        const status = C.shaderc_result_get_compilation_status(result);
+        if (status != C.shaderc_compilation_status_success) {
+            const msg = C.shaderc_result_get_error_message(result);
+            const err = std.mem.span(msg);
+            std.debug.print("{s}\n", .{err});
+            return error.CouldNotCompileShader;
+        }
+
+        const len = C.shaderc_result_get_length(result);
+        const bytes = C.shaderc_result_get_bytes(result)[0..len];
+        std.debug.print("{s}\n", .{bytes});
+    }
 };

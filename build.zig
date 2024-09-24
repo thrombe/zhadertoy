@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     mach.addPaths(&exe.root_module);
     mach.link(lib_mach.builder, exe);
     exe.root_module.addImport("mach", mach_module);
+    exe.linkSystemLibrary("shaderc");
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
