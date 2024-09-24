@@ -19,7 +19,7 @@ struct StateUniform {
 var<uniform> state: StateUniform;
 
 @vertex
-fn vertex_main(
+fn vert_main(
     @builtin(vertex_index) VertexIndex : u32
 ) -> @builtin(position) vec4<f32> {
     var positions = array<vec3<f32>, 6>(

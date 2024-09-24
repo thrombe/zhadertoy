@@ -64,8 +64,37 @@ const Renderer = struct {
         const core: *mach.Core = core_mod.state();
         const device = core.device;
 
-        const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
-        defer shader_module.release();
+        // const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
+        // defer shader_module.release();
+
+        const vert = @embedFile("vert.glsl");
+        var compiler = Glslc.Compiler{ .opt = .fast };
+        compiler.stage = .vertex;
+        try compiler.dump_assembly(allocator, vert);
+        const vertex_bytes = try compiler.compile(allocator, vert, .spirv);
+        defer allocator.free(vertex_bytes);
+        const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
+            .next_in_chain = .{ .spirv_descriptor = &.{
+                .code_size = @intCast(vertex_bytes.len),
+                .code = vertex_bytes.ptr,
+            } },
+            .label = "vert.glsl",
+        });
+        defer vertex_shader_module.release();
+
+        const frag = @embedFile("frag.glsl");
+        compiler.stage = .fragment;
+        try compiler.dump_assembly(allocator, frag);
+        const frag_bytes = try compiler.compile(allocator, frag, .spirv);
+        defer allocator.free(frag_bytes);
+        const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
+            .next_in_chain = .{ .spirv_descriptor = &.{
+                .code_size = @intCast(frag_bytes.len),
+                .code = frag_bytes.ptr,
+            } },
+            .label = "frag.glsl",
+        });
+        defer frag_shader_module.release();
 
         const blend = gpu.BlendState{};
         const color_target = gpu.ColorTargetState{
@@ -74,13 +103,13 @@ const Renderer = struct {
             .write_mask = gpu.ColorWriteMaskFlags.all,
         };
         const fragment = gpu.FragmentState.init(.{
-            .module = shader_module,
-            .entry_point = "frag_main",
+            .module = frag_shader_module,
+            .entry_point = "main",
             .targets = &.{color_target},
         });
         const vertex = gpu.VertexState{
-            .module = shader_module,
-            .entry_point = "vertex_main",
+            .module = vertex_shader_module,
+            .entry_point = "main",
         };
 
         const label = @tagName(name) ++ ".init";
@@ -317,7 +346,7 @@ const Glslc = struct {
             .opt = .fast,
             .stage = .fragment,
         };
-        const shader: []const u8 = @embedFile("shader.glsl");
+        const shader: []const u8 = @embedFile("frag.glsl");
         const bytes = try compiler.compile(allocator, shader, .assembly);
         defer allocator.free(bytes);
 
@@ -343,6 +372,12 @@ const Glslc = struct {
             assembly,
             spirv,
         };
+
+        fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: []const u8) !void {
+            const bytes = try self.compile(alloc, code, .assembly);
+            defer alloc.free(bytes);
+            std.debug.print("{s}\n", .{bytes});
+        }
 
         fn compile(self: @This(), alloc: std.mem.Allocator, code: []const u8, comptime output_type: OutputType) !(switch (output_type) {
             .spirv => []u32,
@@ -425,7 +460,7 @@ const Glslc = struct {
                 null,
             );
             return switch (output_type) {
-                .spirv => @ptrCast(@alignCast(bytes)),
+                .spirv => std.mem.bytesAsSlice(u32, bytes),
                 .assembly => bytes,
             };
         }
