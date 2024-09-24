@@ -21,6 +21,18 @@ pub fn build(b: *std.Build) void {
     mach.link(lib_mach.builder, exe);
     exe.root_module.addImport("mach", mach_module);
     exe.linkSystemLibrary("shaderc");
+
+    // exe.linkSystemLibrary("dawn");
+
+    // exe.linkSystemLibrary("glslang");
+    // exe.linkSystemLibrary("SPIRV");
+    // exe.linkSystemLibrary("shaderc");
+    // exe.linkSystemLibrary("OSDependent");
+
+    // exe.linkLibC();
+    // exe.linkLibCpp();
+    // exe.linkSystemLibrary("stdc++");
+    // exe.linkSystemLibrary("c++");
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

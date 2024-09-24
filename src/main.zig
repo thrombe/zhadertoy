@@ -331,6 +331,8 @@ const App = struct {
 
 // TODO: move this to a mach "entrypoint" zig module
 pub fn main() !void {
+    // try Glslang.testfn();
+    // try Dawn.testfn();
     // try Shaderc.testfn();
     // try Glslc.testfn();
 
@@ -525,5 +527,108 @@ const Shaderc = struct {
         const len = C.shaderc_result_get_length(result);
         const bytes = C.shaderc_result_get_bytes(result)[0..len];
         std.debug.print("{s}\n", .{bytes});
+    }
+};
+
+const Dawn = struct {
+    const C = @cImport({
+        @cInclude("dawn/webgpu.h");
+    });
+
+    pub fn testfn() !void {}
+};
+
+const Glslang = struct {
+    const C = @cImport({
+        @cInclude("glslang/Include/glslang_c_interface.h");
+        @cInclude("glslang/Public/resource_limits_c.h");
+        @cInclude("stdio.h");
+        @cInclude("stdlib.h");
+        @cInclude("stdint.h");
+        @cInclude("stdbool.h");
+    });
+
+    const SpirVBinary = struct {
+        words: ?*C.u_int32_t, // SPIR-V words
+        size: usize, // number of words in SPIR-V binary
+    };
+
+    pub fn testfn() !void {
+        const shader = @embedFile("shader.glsl");
+        const bin = try compileShaderToSPIRV_Vulkan(
+            C.GLSLANG_STAGE_VERTEX_MASK | C.GLSLANG_STAGE_FRAGMENT_MASK | C.GLSLANG_STAGE_COMPUTE_MASK,
+            shader.ptr,
+        );
+        _ = bin;
+    }
+
+    fn compileShaderToSPIRV_Vulkan(stage: C.glslang_stage_t, shaderSource: [*c]const u8) !SpirVBinary {
+        const input = C.glslang_input_t{
+            .language = C.GLSLANG_SOURCE_GLSL,
+            .stage = stage,
+            .client = C.GLSLANG_CLIENT_VULKAN,
+            .client_version = C.GLSLANG_TARGET_VULKAN_1_2,
+            .target_language = C.GLSLANG_TARGET_SPV,
+            .target_language_version = C.GLSLANG_TARGET_SPV_1_5,
+            .code = shaderSource,
+            .default_version = 100,
+            .default_profile = C.GLSLANG_NO_PROFILE,
+            .force_default_version_and_profile = C.false,
+            .forward_compatible = C.false,
+            .messages = C.GLSLANG_MSG_DEFAULT_BIT,
+            .resource = C.glslang_default_resource(),
+        };
+
+        const shader = C.glslang_shader_create(&input);
+
+        var bin = SpirVBinary{
+            .words = null,
+            .size = 0,
+        };
+        if (C.glslang_shader_preprocess(shader, &input) == C.false) {
+            _ = C.printf("GLSL preprocessing failed\n");
+            _ = C.printf("%s\n", C.glslang_shader_get_info_log(shader));
+            _ = C.printf("%s\n", C.glslang_shader_get_info_debug_log(shader));
+            _ = C.printf("%s\n", input.code);
+            C.glslang_shader_delete(shader);
+            return bin;
+        }
+
+        if (C.glslang_shader_parse(shader, &input) == C.false) {
+            _ = C.printf("GLSL parsing failed\n");
+            _ = C.printf("%s\n", C.glslang_shader_get_info_log(shader));
+            _ = C.printf("%s\n", C.glslang_shader_get_info_debug_log(shader));
+            _ = C.printf("%s\n", C.glslang_shader_get_preprocessed_code(shader));
+            C.glslang_shader_delete(shader);
+            return bin;
+        }
+
+        const program = C.glslang_program_create();
+        C.glslang_program_add_shader(program, shader);
+
+        if (C.glslang_program_link(program, C.GLSLANG_MSG_SPV_RULES_BIT | C.GLSLANG_MSG_VULKAN_RULES_BIT) == C.false) {
+            _ = C.printf("GLSL linking failed\n");
+            _ = C.printf("%s\n", C.glslang_program_get_info_log(program));
+            _ = C.printf("%s\n", C.glslang_program_get_info_debug_log(program));
+            C.glslang_program_delete(program);
+            C.glslang_shader_delete(shader);
+            return bin;
+        }
+
+        C.glslang_program_SPIRV_generate(program, stage);
+
+        bin.size = C.glslang_program_SPIRV_get_size(program);
+        bin.words = @ptrCast(@alignCast(C.malloc(bin.size * @sizeOf(C.u_int32_t))));
+        C.glslang_program_SPIRV_get(program, bin.words);
+
+        const spirv_messages = @as(?[*c]const u8, C.glslang_program_SPIRV_get_messages(program));
+        if (spirv_messages) |msg| {
+            _ = C.printf("%s\n", msg);
+        }
+
+        C.glslang_program_delete(program);
+        C.glslang_shader_delete(shader);
+
+        return bin;
     }
 };
