@@ -43,18 +43,172 @@ const Renderer = struct {
     // uniform bind group offset must be 256-byte aligned
     const uniform_offset = 256;
 
+    const IBuffer = struct {
+        ptr: *anyopaque,
+        vtable: *const struct {
+            update: *const fn (any_self: *anyopaque, encoder: *gpu.CommandEncoder) void,
+            deinit: *const fn (any_self: *anyopaque, alloc: std.mem.Allocator) void,
+            size: *const fn () usize,
+            buf: *const fn (any_self: *anyopaque) *gpu.Buffer,
+        },
+
+        fn size(self: *@This()) usize {
+            return self.vtable.size();
+        }
+        fn buf(self: *@This()) *gpu.Buffer {
+            return self.vtable.buf(self.ptr);
+        }
+        fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
+            self.vtable.update(self.ptr, encoder);
+        }
+        fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+            self.vtable.deinit(self.ptr, alloc);
+        }
+    };
+    fn Buffer(typ: anytype) type {
+        return struct {
+            val: typ,
+            buffer: *gpu.Buffer,
+            label: [*:0]const u8,
+
+            fn new(comptime nam: []const u8, val: typ, alloc: std.mem.Allocator, device: *gpu.Device) !*@This() {
+                const label = nam ++ ".init";
+                const buffer = device.createBuffer(&.{
+                    .label = label ++ " uniform buffer",
+                    .usage = .{ .copy_dst = true, .uniform = true },
+                    .size = @sizeOf(typ) * uniform_offset, // HUH: why is this size*uniform_offset? it should be the next multiple of uniform_offset
+                    .mapped_at_creation = .false,
+                });
+                const buff = try alloc.create(@This());
+                buff.* = .{
+                    .val = val,
+                    .buffer = buffer,
+                    .label = label,
+                };
+                return buff;
+            }
+            fn size() usize {
+                return @sizeOf(typ);
+            }
+            fn buf(self: *@This()) *gpu.Buffer {
+                return self.buffer;
+            }
+            fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
+                encoder.writeBuffer(self.buffer, 0, &[_]typ{self.val});
+            }
+            fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+                self.buffer.release();
+                alloc.destroy(self);
+            }
+            fn interface(self: *@This()) IBuffer {
+                return .{
+                    .ptr = self,
+                    .vtable = &.{
+                        .update = @ptrCast(&update),
+                        .deinit = @ptrCast(&@This().deinit),
+                        .size = @ptrCast(&size),
+                        .buf = @ptrCast(&buf),
+                    },
+                };
+            }
+        };
+    }
+    const Binding = struct {
+        label: [*:0]const u8,
+        group: ?*gpu.BindGroup = null,
+        layout: ?*gpu.BindGroupLayout = null,
+        buffers: std.ArrayListUnmanaged(IBuffer) = .{},
+
+        fn add(self: *@This(), buffer: anytype, alloc: std.mem.Allocator) !void {
+            const itf: IBuffer = buffer.interface();
+            try self.buffers.append(alloc, itf);
+        }
+        fn init(self: *@This(), label: [*:0]const u8, device: *gpu.Device, alloc: std.mem.Allocator) !void {
+            var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
+            defer layout_entries.deinit(alloc);
+            var bind_group_entries = std.ArrayListUnmanaged(gpu.BindGroup.Entry){};
+            defer bind_group_entries.deinit(alloc);
+
+            for (self.buffers.items, 0..) |*buf, i| {
+                const bind_group_layout_entry = gpu.BindGroupLayout.Entry.buffer(
+                    @intCast(i),
+                    .{
+                        .vertex = true,
+                        .fragment = true,
+                        .compute = true,
+                    },
+                    .uniform,
+                    true,
+                    0,
+                );
+                try layout_entries.append(alloc, bind_group_layout_entry);
+
+                const bind_group_entry = gpu.BindGroup.Entry.buffer(@intCast(i), buf.buf(), 0, buf.size());
+                try bind_group_entries.append(alloc, bind_group_entry);
+            }
+
+            const bind_group_layout = device.createBindGroupLayout(
+                &gpu.BindGroupLayout.Descriptor.init(.{
+                    .label = label,
+                    .entries = layout_entries.items,
+                }),
+            );
+
+            const bind_group = device.createBindGroup(
+                &gpu.BindGroup.Descriptor.init(.{
+                    .label = label,
+                    .layout = bind_group_layout,
+                    .entries = bind_group_entries.items,
+                }),
+            );
+            self.group = bind_group;
+            self.layout = bind_group_layout;
+        }
+        fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
+            for (self.buffers.items) |*buf| {
+                buf.update(encoder);
+            }
+        }
+        fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+            if (self.layout) |layout| {
+                layout.release();
+            }
+            if (self.group) |group| {
+                group.release();
+            }
+            for (self.buffers.items) |*buf| {
+                buf.deinit(alloc);
+            }
+            self.buffers.deinit(alloc);
+        }
+    };
+
+    const Vec3 = extern struct {
+        x: f32,
+        y: f32,
+        z: f32,
+    };
+    const ShadertoyUniforms = struct {
+        time: *Buffer(f32),
+        resolution: *Buffer(Vec3),
+    };
+
     timer: mach.Timer,
 
-    bind_group: *gpu.BindGroup,
     pipeline: *gpu.RenderPipeline,
-    uniform_buffer: *gpu.Buffer,
-    state: StateUniform,
+    binding: Binding,
+    buffer: *Buffer(StateUniform),
+    st_buffers: ShadertoyUniforms,
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
         self.pipeline.release();
-        self.bind_group.release();
-        self.uniform_buffer.release();
+        self.binding.deinit(allocator);
+
+        // buffer's interface is already in self.binding
+        // self.buffer.deinit(allocator);
+        // self.st_buffers.time.deinit(allocator);
+        // self.st_buffers.resolution.deinit(allocator);
     }
 
     fn init(
@@ -64,8 +218,39 @@ const Renderer = struct {
         const core: *mach.Core = core_mod.state();
         const device = core.device;
 
+        const state = .{
+            .render_width = core_mod.get(core.main_window, .width).?,
+            .render_height = core_mod.get(core.main_window, .height).?,
+            .display_width = core_mod.get(core.main_window, .height).?,
+            .display_height = core_mod.get(core.main_window, .height).?,
+        };
+        const buffer = try Buffer(StateUniform).new(@tagName(name), state, allocator, device);
+        const st_buffers = ShadertoyUniforms{
+            .time = try Buffer(f32).new(@tagName(name), 0.0, allocator, device),
+            .resolution = try Buffer(Vec3).new(@tagName(name), Vec3{
+                .x = @floatFromInt(core_mod.get(core.main_window, .width).?),
+                .y = @floatFromInt(core_mod.get(core.main_window, .height).?),
+                .z = 0.0,
+            }, allocator, device),
+        };
+
+        var binding = Binding{ .label = buffer.label };
+        try binding.add(buffer, allocator);
+        try binding.add(st_buffers.time, allocator);
+        try binding.add(st_buffers.resolution, allocator);
+        try binding.init(@tagName(name), device, allocator);
+
+        const bind_group_layouts = [_]*gpu.BindGroupLayout{binding.layout.?};
+        const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
+            .label = binding.label,
+            .bind_group_layouts = &bind_group_layouts,
+        }));
+        defer pipeline_layout.release();
+
         // const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
         // defer shader_module.release();
+        // const frag_shader_module = shader_module;
+        // const vertex_shader_module = shader_module;
 
         const vert = @embedFile("vert.glsl");
         var compiler = Glslc.Compiler{ .opt = .fast };
@@ -104,60 +289,18 @@ const Renderer = struct {
         };
         const fragment = gpu.FragmentState.init(.{
             .module = frag_shader_module,
+            // .entry_point = "frag_main",
             .entry_point = "main",
             .targets = &.{color_target},
         });
         const vertex = gpu.VertexState{
             .module = vertex_shader_module,
+            // .entry_point = "vert_main",
             .entry_point = "main",
         };
 
-        const label = @tagName(name) ++ ".init";
-        const uniform_buffer = device.createBuffer(&.{
-            .label = label ++ " uniform buffer",
-            .usage = .{ .copy_dst = true, .uniform = true },
-            .size = @sizeOf(StateUniform) * uniform_offset, // HUH: why is this size*uniform_offset? it should be the next multiple of uniform_offset
-            .mapped_at_creation = .false,
-        });
-
-        const bind_group_layout_entry = gpu.BindGroupLayout.Entry.buffer(
-            0,
-            .{
-                .vertex = true,
-                .fragment = true,
-                .compute = true,
-            },
-            .uniform,
-            true,
-            0,
-        );
-        const bind_group_layout = device.createBindGroupLayout(
-            &gpu.BindGroupLayout.Descriptor.init(.{
-                .label = label,
-                .entries = &.{bind_group_layout_entry},
-            }),
-        );
-        defer bind_group_layout.release();
-
-        const bind_group = device.createBindGroup(
-            &gpu.BindGroup.Descriptor.init(.{
-                .label = label,
-                .layout = bind_group_layout,
-                .entries = &.{
-                    gpu.BindGroup.Entry.buffer(0, uniform_buffer, 0, @sizeOf(StateUniform)),
-                },
-            }),
-        );
-
-        const bind_group_layouts = [_]*gpu.BindGroupLayout{bind_group_layout};
-        const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
-            .label = label,
-            .bind_group_layouts = &bind_group_layouts,
-        }));
-        defer pipeline_layout.release();
-
         const pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
-            .label = label,
+            .label = binding.label,
             .fragment = &fragment,
             .layout = pipeline_layout,
             .vertex = vertex,
@@ -166,15 +309,10 @@ const Renderer = struct {
         self_mod.init(.{
             .timer = try mach.Timer.start(),
 
-            .bind_group = bind_group,
+            .binding = binding,
+            .buffer = buffer,
+            .st_buffers = st_buffers,
             .pipeline = pipeline,
-            .uniform_buffer = uniform_buffer,
-            .state = .{
-                .render_width = core_mod.get(core.main_window, .width).?,
-                .render_height = core_mod.get(core.main_window, .height).?,
-                .display_width = core_mod.get(core.main_window, .height).?,
-                .display_height = core_mod.get(core.main_window, .height).?,
-            },
         });
     }
 
@@ -193,7 +331,8 @@ const Renderer = struct {
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
-        encoder.writeBuffer(self.uniform_buffer, 0, &[_]StateUniform{self.state});
+        // encoder.writeBuffer(self.uniform_buffer, 0, &[_]StateUniform{self.state});
+        self.binding.update(encoder);
 
         const sky_blue_background = gpu.Color{ .r = 40.0 / 255.0, .g = 40.0 / 255.0, .b = 40.0 / 255.0, .a = 1 };
         const color_attachments = [_]gpu.RenderPassColorAttachment{.{
@@ -209,7 +348,7 @@ const Renderer = struct {
         defer render_pass.release();
 
         render_pass.setPipeline(self.pipeline);
-        render_pass.setBindGroup(0, self.bind_group, &.{0});
+        render_pass.setBindGroup(0, self.binding.group.?, &.{ 0, 0, 0 });
         render_pass.draw(6, 1, 0, 0);
         render_pass.end();
 
@@ -225,25 +364,27 @@ const Renderer = struct {
 
         const self: *@This() = self_mod.state();
 
-        self.state.time += self.timer.lap();
+        var state = &self.buffer.val;
+        state.time += self.timer.lap();
+        self.st_buffers.time.val = state.time;
 
         var iter = mach.core.pollEvents();
         while (iter.next()) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
-                    self.state.cursor_x = @floatCast(pos.pos.x);
-                    self.state.cursor_y = @floatCast(pos.pos.y);
+                    state.cursor_x = @floatCast(pos.pos.x);
+                    state.cursor_y = @floatCast(pos.pos.y);
                 },
                 .mouse_press => |button| {
                     switch (button.button) {
                         .left => {
-                            self.state.mouse_left = 1;
+                            state.mouse_left = 1;
                         },
                         .right => {
-                            self.state.mouse_right = 1;
+                            state.mouse_right = 1;
                         },
                         .middle => {
-                            self.state.mouse_middle = 1;
+                            state.mouse_middle = 1;
                         },
                         else => {},
                     }
@@ -251,19 +392,19 @@ const Renderer = struct {
                 .mouse_release => |button| {
                     switch (button.button) {
                         .left => {
-                            self.state.mouse_left = 0;
+                            state.mouse_left = 0;
                         },
                         .right => {
-                            self.state.mouse_right = 0;
+                            state.mouse_right = 0;
                         },
                         .middle => {
-                            self.state.mouse_middle = 0;
+                            state.mouse_middle = 0;
                         },
                         else => {},
                     }
                 },
                 .mouse_scroll => |del| {
-                    self.state.scroll += del.yoffset;
+                    state.scroll += del.yoffset;
                 },
                 .key_press => |ev| {
                     switch (ev.key) {
@@ -279,10 +420,10 @@ const Renderer = struct {
                     }
                 },
                 .framebuffer_resize => |sze| {
-                    self.state.render_height = sze.height;
-                    self.state.render_width = sze.width;
-                    self.state.display_height = sze.height;
-                    self.state.display_width = sze.width;
+                    state.render_height = sze.height;
+                    state.render_width = sze.width;
+                    state.display_height = sze.height;
+                    state.display_width = sze.width;
                 },
                 .close => core_mod.schedule(.exit),
                 else => {},
