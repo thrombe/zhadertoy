@@ -478,12 +478,12 @@ const Shaderc = struct {
     const Shader = struct {
         result: *C.struct_shaderc_compilation_result,
 
-        pub fn deinit(self: *@This()) void {
+        fn deinit(self: *@This()) void {
             C.shaderc_result_release(self.result);
         }
 
         /// owned by Shader
-        pub fn bytes(self: *@This()) []const u32 {
+        fn bytes(self: *@This()) []const u32 {
             const len = C.shaderc_result_get_length(self.result);
             const res = C.shaderc_result_get_bytes(self.result)[0..len];
             // alignment guranteed when it is spirv
@@ -491,7 +491,7 @@ const Shaderc = struct {
         }
     };
 
-    pub fn testfn() !void {
+    fn testfn() !void {
         const shader = @embedFile("frag.glsl");
         // std.debug.print("{s}\n", .{shader.ptr[0..shader.len]});
 
@@ -535,7 +535,7 @@ const Dawn = struct {
         @cInclude("dawn/webgpu.h");
     });
 
-    pub fn testfn() !void {}
+    fn testfn() !void {}
 };
 
 const Glslang = struct {
@@ -553,7 +553,7 @@ const Glslang = struct {
         size: usize, // number of words in SPIR-V binary
     };
 
-    pub fn testfn() !void {
+    fn testfn() !void {
         const shader = @embedFile("shader.glsl");
         const bin = try compileShaderToSPIRV_Vulkan(
             C.GLSLANG_STAGE_VERTEX_MASK | C.GLSLANG_STAGE_FRAGMENT_MASK | C.GLSLANG_STAGE_COMPUTE_MASK,
