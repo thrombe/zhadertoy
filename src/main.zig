@@ -476,6 +476,7 @@ pub fn main() !void {
     // try Dawn.testfn();
     // try Shaderc.testfn();
     // try Glslc.testfn();
+    // try Shadertoy.testfn();
 
     // Initialize mach core
     try mach.core.initModule();
@@ -483,6 +484,119 @@ pub fn main() !void {
     // Main loop
     while (try mach.core.tick()) {}
 }
+
+const Shadertoy = struct {
+    // https://www.shadertoy.com/howto
+    const base = "https://www.shadertoy.com";
+    const api_base = base ++ "/api/v1";
+    const key = "BdHjRn";
+
+    fn testfn() !void {
+        const toy = try Toy.from_file("./toys/new.json");
+        defer toy.deinit();
+
+        std.debug.print("{s}\n", .{toy.value.Shader.renderpass[0].code});
+    }
+
+    const Toy = struct {
+        Shader: struct {
+            info: struct {
+                id: []const u8,
+                name: []const u8,
+                username: []const u8,
+                description: []const u8,
+            },
+            renderpass: []struct {
+                outputs: []struct {
+                    id: u32,
+                    channel: u32,
+                },
+                code: []const u8,
+                name: []const u8,
+                description: []const u8,
+                type: []const u8,
+            },
+        },
+
+        fn from_json(json: []const u8) !std.json.Parsed(@This()) {
+            const toy = try std.json.parseFromSlice(@This(), allocator, json, .{
+                .ignore_unknown_fields = true,
+                .allocate = .alloc_always,
+            });
+            return toy;
+        }
+        fn from_file(path: []const u8) !std.json.Parsed(@This()) {
+            const rpath = try std.fs.realpathAlloc(allocator, path);
+            defer allocator.free(rpath);
+            const file = try std.fs.openFileAbsolute(rpath, .{});
+            defer file.close();
+            const bytes = try file.readToEndAlloc(allocator, 10 * 1000 * 1000);
+            return try from_json(bytes);
+        }
+    };
+
+    fn get_shader(id: []const u8) !std.json.Parsed(Toy) {
+        const url = try std.fmt.allocPrintZ(allocator, api_base ++ "/shaders/{s}?key=" ++ key, .{id});
+        defer allocator.free(url);
+        const body = try Curl.get(url);
+        defer allocator.free(body);
+
+        const toy = try Toy.from_json(body);
+        return toy;
+    }
+    fn query_shaders(query: []const u8) !void {
+        const encoded = try encode(query);
+        defer allocator.free(encoded);
+
+        // sort by: name, love, popular (default), newest, hot
+        // const url = try std.fmt.allocPrint(allocator, api_base ++ "/shaders/query/{s}?sort=newest&from=0&num=25&key=" ++ key, .{encoded});
+        // defer allocator.free(url);
+    }
+    fn get_media(hash: []const u8) !void {
+        const url = try std.fmt.allocPrint(allocator, base ++ "/media/a/{s}", .{hash});
+        defer allocator.free(url);
+    }
+
+    fn get(url: []const u8) ![]const u8 {
+        std.debug.print("{s}\n", .{url});
+        var client = std.http.Client{ .allocator = allocator };
+        defer client.deinit();
+        const uri = try std.Uri.parse(url);
+        const buf = try allocator.alloc(u8, 1024 * 8);
+        defer allocator.free(buf);
+        var req = try client.open(.GET, uri, .{
+            .server_header_buffer = buf,
+            .headers = .{
+                .user_agent = .{
+                    // hello website. i am actuall firefox. no cap.
+                    .override = "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
+                },
+            },
+        });
+        defer req.deinit();
+        try req.send();
+        // try req.finish();
+        // try req.write()
+        try req.wait();
+
+        var body = std.ArrayList(u8).init(allocator);
+        try req.reader().readAllArrayList(&body, 1000 * 1000);
+        return try body.toOwnedSlice();
+    }
+
+    fn encode(str: []const u8) ![]const u8 {
+        const al = std.ArrayList(u8).init(allocator);
+        std.Uri.Component.percentEncode(al.writer(), str, struct {
+            fn isValidChar(c: u8) bool {
+                return switch (c) {
+                    0, '%', ':' => false,
+                    else => true,
+                };
+            }
+        }.isValidChar);
+        return try al.toOwnedSlice();
+    }
+};
 
 const Curl = struct {
     const c = @cImport({
