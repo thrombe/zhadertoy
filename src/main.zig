@@ -479,6 +479,7 @@ pub fn main() !void {
     // try Shaderc.testfn();
     // try Glslc.testfn();
     // try Shadertoy.testfn();
+    // try FsWatch.testfn();
 
     try mach.core.initModule();
     while (try mach.core.tick()) {}
@@ -748,6 +749,126 @@ const Curl = struct {
         }
 
         return body.toOwnedSlice();
+    }
+};
+
+const FsWatch = struct {
+    const c = @cImport({
+        @cInclude("libfswatch/c/libfswatch.h");
+    });
+
+    const Ctx = struct {
+        handle: c.FSW_HANDLE,
+        trigger: Fuse,
+        path: [:0]const u8,
+    };
+
+    ctx: *Ctx,
+    thread: std.Thread,
+
+    fn testfn() !void {
+        var watch = try init("./toys");
+        defer watch.deinit();
+
+        std.time.sleep(std.time.ns_per_s * 10);
+    }
+
+    fn init(path: [:0]const u8) !@This() {
+        const rpath = try std.fs.cwd().realpathAlloc(allocator, path);
+        defer allocator.free(rpath);
+        const pathZ = try allocator.dupeZ(u8, rpath);
+
+        const watch = try start(pathZ);
+        return watch;
+    }
+
+    fn deinit(self: @This()) void {
+        _ = c.fsw_stop_monitor(self.ctx.handle);
+        _ = c.fsw_destroy_session(self.ctx.handle);
+        allocator.free(self.ctx.path);
+        allocator.destroy(self.ctx);
+    }
+
+    fn start(path: [:0]const u8) !@This() {
+        const ok = c.fsw_init_library();
+        if (ok != c.FSW_OK) {
+            return error.CouldNotCreateFsWatcher;
+        }
+
+        const ctxt = try allocator.create(Ctx);
+        ctxt.* = .{
+            .trigger = .{},
+            .handle = null,
+            .path = path,
+        };
+
+        const Callbacks = struct {
+            fn spawn(ctx: *Ctx) !void {
+                ctx.handle = c.fsw_init_session(c.filter_include) orelse return error.CouldNotInitFsWatcher;
+                var oke = c.fsw_add_path(ctx.handle, ctx.path.ptr);
+                if (oke != c.FSW_OK) {
+                    return error.PathAdditionFailed;
+                }
+
+                oke = c.fsw_set_recursive(ctx.handle, true);
+                if (oke != c.FSW_OK) {
+                    return error.FswSetFailed;
+                }
+                oke = c.fsw_set_callback(ctx.handle, @ptrCast(&event_callback), ctx);
+                if (oke != c.FSW_OK) {
+                    return error.FswSetFailed;
+                }
+
+                oke = c.fsw_start_monitor(ctx.handle);
+                if (oke != c.FSW_OK) {
+                    return error.CouldNotStartWatcher;
+                }
+            }
+            fn event_callback(events: [*c]const c.fsw_cevent, num: c_uint, ctx: ?*Ctx) callconv(.C) void {
+                var flags = c.NoOp;
+                flags |= c.Created;
+                flags |= c.Updated;
+                flags |= c.Removed;
+                flags |= c.Renamed;
+                flags |= c.OwnerModified;
+                // flags |= c.AttributeModified;
+                // flags |= c.MovedFrom;
+                // flags |= c.MovedTo;
+
+                for (events[0..@intCast(num)]) |event| {
+                    for (event.flags[0..event.flags_num]) |f| {
+                        if (flags & @as(c_int, @intCast(f)) == 0) {
+                            continue;
+                        }
+                        const name = c.fsw_get_event_flag_name(f);
+                        std.debug.print("Path: {s}\n", .{event.path});
+                        std.debug.print("Event Type: {s}\n", .{std.mem.span(name)});
+                    }
+                }
+
+                ctx.?.trigger.fuse();
+            }
+        };
+
+        const t = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ctxt});
+        return .{
+            .ctx = ctxt,
+            .thread = t,
+        };
+    }
+};
+
+const Fuse = struct {
+    fused: std.atomic.Value(bool) = .{ .raw = false },
+
+    fn fuse(self: *@This()) void {
+        self.fused.store(true, .release);
+    }
+    fn unfuse(self: *@This()) bool {
+        return self.fused.swap(false, .release);
+    }
+    fn check(self: *@This()) bool {
+        return self.fused.load(.acquire);
     }
 };
 
