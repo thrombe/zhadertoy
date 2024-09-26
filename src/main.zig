@@ -472,6 +472,9 @@ const App = struct {
 
 // TODO: move this to a mach "entrypoint" zig module
 pub fn main() !void {
+    defer {
+        _ = gpa.deinit();
+    }
     // try Glslang.testfn();
     // try Dawn.testfn();
     // try Shaderc.testfn();
