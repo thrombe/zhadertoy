@@ -540,6 +540,7 @@ const Shadertoy = struct {
             const file = try std.fs.openFileAbsolute(rpath, .{});
             defer file.close();
             const bytes = try file.readToEndAlloc(allocator, 10 * 1000 * 1000);
+            defer allocator.free(bytes);
             return try from_json(bytes);
         }
     };
