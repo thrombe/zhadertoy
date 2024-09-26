@@ -525,7 +525,31 @@ const Shadertoy = struct {
                 code: []const u8,
                 name: []const u8,
                 description: []const u8,
-                type: []const u8,
+                type: union(enum) {
+                    image,
+                    common,
+                    buffer,
+                    cubemap,
+                    unknown: []const u8,
+
+                    pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                        switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
+                            .string, .allocated_string => |field| {
+                                inline for (@typeInfo(@This()).Union.fields) |typ| {
+                                    comptime if (std.meta.stringToEnum(std.meta.Tag(@This()), typ.name).? == .unknown) {
+                                        continue;
+                                    };
+
+                                    if (std.mem.eql(u8, field, typ.name)) {
+                                        return @unionInit(@This(), typ.name, {});
+                                    }
+                                }
+                                return .{ .unknown = field };
+                            },
+                            else => return error.UnexpectedToken,
+                        }
+                    }
+                },
             },
         },
 
