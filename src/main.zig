@@ -493,15 +493,23 @@ const Shadertoy = struct {
     const base = "https://www.shadertoy.com";
     const api_base = base ++ "/api/v1";
     const key = "BdHjRn";
+    const json_parse_ops = .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    };
 
     fn testfn() !void {
-        const toy = try Toy.from_file("./toys/new.json");
+        var cache = try Cached.init("./toys/shadertoy");
+        defer cache.deinit();
+        const toy = try cache.shader("4t3SzN");
         defer toy.deinit();
 
         std.debug.print("{s}\n", .{toy.value.Shader.renderpass[0].code});
     }
 
     const Toy = struct {
+        const Json = std.json.Parsed(@This());
+
         Shader: struct {
             info: struct {
                 id: []const u8,
@@ -521,14 +529,12 @@ const Shadertoy = struct {
             },
         },
 
-        fn from_json(json: []const u8) !std.json.Parsed(@This()) {
-            const toy = try std.json.parseFromSlice(@This(), allocator, json, .{
-                .ignore_unknown_fields = true,
-                .allocate = .alloc_always,
-            });
+        fn from_json(json: []const u8) !Json {
+            const toy = try std.json.parseFromSlice(@This(), allocator, json, json_parse_ops);
             return toy;
         }
-        fn from_file(path: []const u8) !std.json.Parsed(@This()) {
+
+        fn from_file(path: []const u8) !Json {
             const rpath = try std.fs.realpathAlloc(allocator, path);
             defer allocator.free(rpath);
             const file = try std.fs.openFileAbsolute(rpath, .{});
@@ -538,15 +544,76 @@ const Shadertoy = struct {
         }
     };
 
-    fn get_shader(id: []const u8) !std.json.Parsed(Toy) {
+    const Cached = struct {
+        cache_dir: []const u8,
+
+        fn init(cache_dir: []const u8) !@This() {
+            const cache = try std.fs.realpathAlloc(allocator, cache_dir);
+            var res = try std.fs.cwd().openDir(cache, .{});
+            defer res.close();
+            return .{
+                .cache_dir = cache,
+            };
+        }
+        fn deinit(self: *@This()) void {
+            allocator.free(self.cache_dir);
+        }
+        fn shader(self: *@This(), id: []const u8) !Toy.Json {
+            const path_no_ext = try std.fs.path.join(allocator, &[_][]const u8{
+                self.cache_dir,
+                id,
+            });
+            defer allocator.free(path_no_ext);
+            const path = try std.mem.concat(allocator, u8, &[_][]const u8{
+                path_no_ext,
+                ".json",
+            });
+            defer allocator.free(path);
+            const cwd = std.fs.cwd();
+            var file = cwd.openFile(path, .{}) catch {
+                const json = try get_shader_json(id);
+                defer allocator.free(json);
+                const file = try cwd.createFile(path, .{});
+                defer file.close();
+
+                const value = try std.json.parseFromSlice(
+                    std.json.Value,
+                    allocator,
+                    json,
+                    json_parse_ops,
+                );
+                defer value.deinit();
+
+                try std.json.stringify(
+                    &value.value,
+                    .{ .whitespace = .indent_4 },
+                    file.writer(),
+                );
+
+                return try Toy.from_json(json);
+            };
+            defer file.close();
+            const bytes = try file.readToEndAlloc(allocator, 10 * 1000 * 1000);
+            defer allocator.free(bytes);
+            return try Toy.from_json(bytes);
+        }
+    };
+
+    fn get_shader_json(id: []const u8) ![]const u8 {
         const url = try std.fmt.allocPrintZ(allocator, api_base ++ "/shaders/{s}?key=" ++ key, .{id});
         defer allocator.free(url);
         const body = try Curl.get(url);
+        return body;
+    }
+
+    fn get_shader(id: []const u8) !Toy.Json {
+        const body = try get_shader_json(id);
         defer allocator.free(body);
 
         const toy = try Toy.from_json(body);
         return toy;
     }
+
     fn query_shaders(query: []const u8) !void {
         const encoded = try encode(query);
         defer allocator.free(encoded);
@@ -555,6 +622,7 @@ const Shadertoy = struct {
         // const url = try std.fmt.allocPrint(allocator, api_base ++ "/shaders/query/{s}?sort=newest&from=0&num=25&key=" ++ key, .{encoded});
         // defer allocator.free(url);
     }
+
     fn get_media(hash: []const u8) !void {
         const url = try std.fmt.allocPrint(allocator, base ++ "/media/a/{s}", .{hash});
         defer allocator.free(url);
@@ -602,6 +670,8 @@ const Shadertoy = struct {
 };
 
 const Curl = struct {
+    // - [HTTP Get - Zig cookbook](https://cookbook.ziglang.cc/05-01-http-get.html)
+    // - [libcurl - API](https://curl.se/libcurl/c/)
     const c = @cImport({
         @cInclude("curl/curl.h");
     });
