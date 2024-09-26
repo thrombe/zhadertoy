@@ -785,6 +785,7 @@ const FsFuse = struct {
     fn deinit(self: @This()) void {
         _ = c.fsw_stop_monitor(self.ctx.handle);
         _ = c.fsw_destroy_session(self.ctx.handle);
+        self.thread.join();
         allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
     }
