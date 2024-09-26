@@ -479,7 +479,7 @@ pub fn main() !void {
     // try Shaderc.testfn();
     // try Glslc.testfn();
     // try Shadertoy.testfn();
-    // try FsWatch.testfn();
+    // try FsFuse.testfn();
 
     try mach.core.initModule();
     while (try mach.core.tick()) {}
@@ -752,7 +752,7 @@ const Curl = struct {
     }
 };
 
-const FsWatch = struct {
+const FsFuse = struct {
     const c = @cImport({
         @cInclude("libfswatch/c/libfswatch.h");
     });
@@ -787,6 +787,14 @@ const FsWatch = struct {
         _ = c.fsw_destroy_session(self.ctx.handle);
         allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
+    }
+
+    fn unfuse(self: *@This()) bool {
+        return self.ctx.trigger.unfuse();
+    }
+
+    fn check(self: *@This()) bool {
+        return self.ctx.trigger.check();
     }
 
     fn start(path: [:0]const u8) !@This() {
