@@ -484,6 +484,60 @@ pub fn main() !void {
     while (try mach.core.tick()) {}
 }
 
+const Curl = struct {
+    const c = @cImport({
+        @cInclude("curl/curl.h");
+    });
+    const user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0";
+
+    fn write_callback(ptr: [*]const u8, size: usize, nmemb: usize, userdata: *anyopaque) callconv(.C) usize {
+        const total_size = size * nmemb;
+
+        const body: *std.ArrayList(u8) = @ptrCast(@alignCast(userdata));
+        body.appendSlice(ptr[0..total_size]) catch unreachable;
+
+        return total_size;
+    }
+
+    fn get(url: [:0]const u8) ![]u8 {
+        var ok = c.curl_global_init(c.CURL_GLOBAL_DEFAULT);
+        if (ok != c.CURLE_OK) {
+            return error.CurlIsNotOkay;
+        }
+        const curl = c.curl_easy_init() orelse return error.CurlInitFailed;
+        defer c.curl_easy_cleanup(curl);
+
+        var body = std.ArrayList(u8).init(allocator);
+
+        const headers = c.curl_slist_append(null, "user-agent: " ++ user_agent);
+        defer c.curl_slist_free_all(headers);
+
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_URL, url.ptr);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, write_callback);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_WRITEDATA, &body);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_HTTPHEADER, headers);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+
+        ok = c.curl_easy_perform(curl);
+        if (ok != c.CURLE_OK) {
+            return error.CurlRequestFailed;
+        }
+
+        return body.toOwnedSlice();
+    }
+};
+
 const Glslc = struct {
     fn testfn() !void {
         const compiler = Compiler{

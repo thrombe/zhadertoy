@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) void {
     mach.link(lib_mach.builder, exe);
     exe.root_module.addImport("mach", mach_module);
     exe.linkSystemLibrary("shaderc");
+    exe.linkSystemLibrary("curl");
 
     // exe.linkSystemLibrary("dawn");
 

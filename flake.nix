@@ -84,6 +84,7 @@
           zig
           zls
           gdb
+          curl
 
           # - [nixOS usage | Mach: zig game engine & graphics toolkit](https://machengine.org/about/nixos-usage/)
           xorg.libX11
