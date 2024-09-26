@@ -470,7 +470,6 @@ const App = struct {
     }
 };
 
-// TODO: move this to a mach "entrypoint" zig module
 pub fn main() !void {
     defer {
         _ = gpa.deinit();
@@ -481,10 +480,7 @@ pub fn main() !void {
     // try Glslc.testfn();
     // try Shadertoy.testfn();
 
-    // Initialize mach core
     try mach.core.initModule();
-
-    // Main loop
     while (try mach.core.tick()) {}
 }
 
@@ -503,6 +499,8 @@ const Shadertoy = struct {
         defer cache.deinit();
         const toy = try cache.shader("4t3SzN");
         defer toy.deinit();
+        // const toy = try Toy.from_file("./toys/new.json");
+        // defer toy.deinit();
 
         std.debug.print("{s}\n", .{toy.value.Shader.renderpass[0].code});
     }
@@ -530,6 +528,9 @@ const Shadertoy = struct {
                     common,
                     buffer,
                     cubemap,
+                    volume,
+                    texture,
+                    keyboard,
                     unknown: []const u8,
 
                     pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
@@ -801,26 +802,26 @@ const Glslc = struct {
                 }
                 args.deinit();
             }
-            try args.append(try alloc.dupe(u8, @as([]const u8, "glslc")));
-            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-fshader-stage={s}", .{switch (self.stage) {
-                .fragment => "fragment",
-                .vertex => "vertex",
-                .compute => "compute",
-            }})));
-            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "-x{s}", .{switch (self.lang) {
-                .glsl => "glsl",
-                .hlsl => "hlsl",
-            }})));
-            try args.append(try alloc.dupe(u8, try std.fmt.allocPrint(alloc, "{s}", .{switch (self.opt) {
+            try args.append(try alloc.dupe(u8, "glslc"));
+            try args.append(try alloc.dupe(u8, switch (self.stage) {
+                .fragment => "-fshader-stage=fragment",
+                .vertex => "-fshader-stage=vertex",
+                .compute => "-fshader-stage=compute",
+            }));
+            try args.append(try alloc.dupe(u8, switch (self.lang) {
+                .glsl => "-xglsl",
+                .hlsl => "-xhlsl",
+            }));
+            try args.append(try alloc.dupe(u8, switch (self.opt) {
                 .fast => "-O",
                 .small => "-Os",
                 .none => "-O0",
-            }})));
+            }));
             if (output_type == .assembly) {
-                try args.append(try alloc.dupe(u8, @as([]const u8, "-S")));
+                try args.append(try alloc.dupe(u8, "-S"));
             }
-            try args.append(try alloc.dupe(u8, @as([]const u8, "-o-")));
-            try args.append(try alloc.dupe(u8, @as([]const u8, "-")));
+            try args.append(try alloc.dupe(u8, "-o-"));
+            try args.append(try alloc.dupe(u8, "-"));
 
             var child = std.process.Child.init(args.items, alloc);
             child.stdin_behavior = .Pipe;
