@@ -777,6 +777,7 @@ const FsFuse = struct {
         const rpath = try std.fs.cwd().realpathAlloc(allocator, path);
         defer allocator.free(rpath);
         const pathZ = try allocator.dupeZ(u8, rpath);
+        defer allocator.free(pathZ);
 
         const watch = try start(pathZ);
         return watch;
@@ -786,7 +787,6 @@ const FsFuse = struct {
         _ = c.fsw_stop_monitor(self.ctx.handle);
         _ = c.fsw_destroy_session(self.ctx.handle);
         self.thread.join();
-        allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
     }
 
@@ -808,13 +808,12 @@ const FsFuse = struct {
         ctxt.* = .{
             .trigger = .{},
             .handle = null,
-            .path = path,
         };
 
         const Callbacks = struct {
-            fn spawn(ctx: *Ctx) !void {
+            fn spawn(ctx: *Ctx, pathZ: [:0]const u8) !void {
                 ctx.handle = c.fsw_init_session(c.filter_include) orelse return error.CouldNotInitFsWatcher;
-                var oke = c.fsw_add_path(ctx.handle, ctx.path.ptr);
+                var oke = c.fsw_add_path(ctx.handle, pathZ.ptr);
                 if (oke != c.FSW_OK) {
                     return error.PathAdditionFailed;
                 }
@@ -859,7 +858,7 @@ const FsFuse = struct {
             }
         };
 
-        const t = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ctxt});
+        const t = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ ctxt, path });
         return .{
             .ctx = ctxt,
             .thread = t,
