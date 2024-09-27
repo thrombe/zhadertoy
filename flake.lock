@@ -55,6 +55,23 @@
         "type": "github"
       }
     },
+    "glslang": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1718928749,
+        "narHash": "sha256-IR1jvPsTABrL/MLwQgnCUA10atLpHFuEWtdwHq727NY=",
+        "owner": "KhronosGroup",
+        "repo": "glslang",
+        "rev": "2d8b71fc63578a93726c05e0565c3ef064bdc1ba",
+        "type": "github"
+      },
+      "original": {
+        "owner": "KhronosGroup",
+        "repo": "glslang",
+        "rev": "2d8b71fc63578a93726c05e0565c3ef064bdc1ba",
+        "type": "github"
+      }
+    },
     "langref": {
       "flake": false,
       "locked": {
@@ -106,11 +123,66 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "glslang": "glslang",
         "mach-flake": "mach-flake",
         "nixpkgs": "nixpkgs",
+        "shaderc": "shaderc",
+        "spirv-headers": "spirv-headers",
+        "spirv-tools": "spirv-tools",
         "zig-overlay": "zig-overlay",
         "zig2nix": "zig2nix",
         "zls": "zls"
+      }
+    },
+    "shaderc": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1718999867,
+        "narHash": "sha256-1hyhUIN8pNvAdnmnGwzvACLibXdmCFQ0ukPmuhpE3ng=",
+        "owner": "google",
+        "repo": "shaderc",
+        "rev": "3ac03b8ad85a8e328a6182cddee8d05810bd5a2c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "google",
+        "ref": "v2024.2",
+        "repo": "shaderc",
+        "type": "github"
+      }
+    },
+    "spirv-headers": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1718206874,
+        "narHash": "sha256-c9ruBCnf9PNJz030bfRhHwyqju6T8YCRx+efKCEYgSo=",
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Headers",
+        "rev": "2acb319af38d43be3ea76bfabf3998e5281d8d12",
+        "type": "github"
+      },
+      "original": {
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Headers",
+        "rev": "2acb319af38d43be3ea76bfabf3998e5281d8d12",
+        "type": "github"
+      }
+    },
+    "spirv-tools": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1718893782,
+        "narHash": "sha256-5swjNHeJpsCDkUVBL1uFqAzOPFzCESsYtDfRkno2bN4=",
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Tools",
+        "rev": "0cfe9e7219148716dfd30b37f4d21753f098707a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "KhronosGroup",
+        "repo": "SPIRV-Tools",
+        "rev": "0cfe9e7219148716dfd30b37f4d21753f098707a",
+        "type": "github"
       }
     },
     "systems": {

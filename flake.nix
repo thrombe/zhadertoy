@@ -29,6 +29,23 @@
       inputs.flake-utils.follows = "flake-utils";
       inputs.zig2nix.follows = "zig2nix";
     };
+
+    glslang = {
+      url = "github:KhronosGroup/glslang/2d8b71fc63578a93726c05e0565c3ef064bdc1ba";
+      flake = false;
+    };
+    spirv-tools = {
+      url = "github:KhronosGroup/SPIRV-Tools/0cfe9e7219148716dfd30b37f4d21753f098707a";
+      flake = false;
+    };
+    spirv-headers = {
+      url = "github:KhronosGroup/SPIRV-Headers/2acb319af38d43be3ea76bfabf3998e5281d8d12";
+      flake = false;
+    };
+    shaderc = {
+      url = "github:google/shaderc/v2024.2";
+      flake = false;
+    };
   };
 
   outputs = inputs:
@@ -58,6 +75,86 @@
       pkgs = import inputs.nixpkgs {
         inherit system;
         inherit overlays;
+      };
+
+      shaderc = stdenv.mkDerivation rec {
+        name = "shaderc";
+        src = inputs.shaderc;
+
+        dontStrip = true;
+
+        outputs = [ "out" "lib" "bin" "dev" "static" ];
+
+        postPatch = ''
+          cp -r --no-preserve=mode ${inputs.glslang} third_party/glslang
+          cp -r --no-preserve=mode ${inputs.spirv-tools} third_party/spirv-tools
+          ln -s ${inputs.spirv-headers} third_party/spirv-tools/external/spirv-headers
+          patchShebangs --build utils/
+        '';
+
+        nativeBuildInputs = [ pkgs.cmake pkgs.python3 ];
+
+        postInstall = ''
+          moveToOutput "lib/*.a" $static
+        '';
+
+        cmakeFlags = [ "-DSHADERC_SKIP_TESTS=ON" ];
+
+        # Fix the paths in .pc, even though it's unclear if all these .pc are really useful.
+        postFixup = ''
+          substituteInPlace "$dev"/lib/pkgconfig/*.pc \
+            --replace '=''${prefix}//' '=/' \
+            --replace "$dev/$dev/" "$dev/"
+        '';
+
+        meta = with pkgs.lib; {
+          inherit (src.meta) homepage;
+          description = "A collection of tools, libraries and tests for shader compilation";
+          platforms = platforms.all;
+          license = [ licenses.asl20 ];
+        };
+      };
+      glslang = stdenv.mkDerivation rec {
+        name = "glslang";
+
+        src = inputs.glslang;
+
+        dontStrip = true;
+
+        # These get set at all-packages, keep onto them for child drvs
+        # passthru = {
+        #   spirv-tools = pkgs.spirv-tools;
+        #   spirv-headers = pkgs.spirv-headers;
+        # };
+
+        nativeBuildInputs = with pkgs; [cmake python3 bison jq];
+
+        postPatch = ''
+          cp --no-preserve=mode -r "${inputs.spirv-tools}" External/spirv-tools
+          ln -s "${inputs.spirv-headers}" External/spirv-tools/external/spirv-headers
+        '';
+
+        # This is a dirty fix for lib/cmake/SPIRVTargets.cmake:51 which includes this directory
+        postInstall = ''
+          mkdir $out/include/External
+        '';
+
+        # Fix the paths in .pc, even though it's unclear if these .pc are really useful.
+        postFixup = ''
+          substituteInPlace $out/lib/pkgconfig/*.pc \
+            --replace '=''${prefix}//' '=/'
+
+          # add a symlink for backwards compatibility
+          ln -s $out/bin/glslang $out/bin/glslangValidator
+        '';
+
+        meta = with pkgs.lib; {
+          inherit (src.meta) homepage;
+          description = "Khronos reference front-end for GLSL and ESSL";
+          license = licenses.asl20;
+          platforms = platforms.unix;
+          maintainers = [maintainers.ralith];
+        };
       };
 
       fhs = pkgs.buildFHSEnv {
@@ -94,6 +191,8 @@
         ++ [
           pkgs.glslang
           pkgs.shaderc
+          # glslang
+          # shaderc
         ]
         ++ (custom-commands pkgs);
 
