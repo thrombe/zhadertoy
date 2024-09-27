@@ -753,6 +753,8 @@ const Curl = struct {
 };
 
 const FsFuse = struct {
+    // - [emcrisostomo/fswatch](https://github.com/emcrisostomo/fswatch?tab=readme-ov-file#libfswatch)
+    // - [libfswatch/c/libfswatch.h Reference](http://emcrisostomo.github.io/fswatch/doc/1.17.1/libfswatch.html/libfswatch_8h.html#ae465ef0618fb1dc6d8b70dee68359ea6)
     const c = @cImport({
         @cInclude("libfswatch/c/libfswatch.h");
     });
@@ -777,7 +779,6 @@ const FsFuse = struct {
         const rpath = try std.fs.cwd().realpathAlloc(allocator, path);
         defer allocator.free(rpath);
         const pathZ = try allocator.dupeZ(u8, rpath);
-        defer allocator.free(pathZ);
 
         const watch = try start(pathZ);
         return watch;
@@ -787,6 +788,7 @@ const FsFuse = struct {
         _ = c.fsw_stop_monitor(self.ctx.handle);
         _ = c.fsw_destroy_session(self.ctx.handle);
         self.thread.join();
+        allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
     }
 
@@ -808,12 +810,13 @@ const FsFuse = struct {
         ctxt.* = .{
             .trigger = .{},
             .handle = null,
+            .path = path,
         };
 
         const Callbacks = struct {
-            fn spawn(ctx: *Ctx, pathZ: [:0]const u8) !void {
+            fn spawn(ctx: *Ctx) !void {
                 ctx.handle = c.fsw_init_session(c.filter_include) orelse return error.CouldNotInitFsWatcher;
-                var oke = c.fsw_add_path(ctx.handle, pathZ.ptr);
+                var oke = c.fsw_add_path(ctx.handle, ctx.path.ptr);
                 if (oke != c.FSW_OK) {
                     return error.PathAdditionFailed;
                 }
