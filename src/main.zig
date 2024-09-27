@@ -22,6 +22,7 @@ const Renderer = struct {
         .deinit = .{ .handler = deinit },
         .tick = .{ .handler = tick },
         .render_frame = .{ .handler = render_frame },
+        .update_shaders = .{ .handler = update_shaders },
     };
     pub const Mod = mach.Mod(@This());
 
@@ -195,6 +196,7 @@ const Renderer = struct {
     };
 
     timer: mach.Timer,
+    shader_fuse: FsFuse,
 
     pipeline: *gpu.RenderPipeline,
     binding: Binding,
@@ -205,6 +207,7 @@ const Renderer = struct {
         const self: *@This() = self_mod.state();
         self.pipeline.release();
         self.binding.deinit(allocator);
+        self.shader_fuse.deinit();
 
         // buffer's interface is already in self.binding
         // self.buffer.deinit(allocator);
@@ -219,18 +222,20 @@ const Renderer = struct {
         const core: *mach.Core = core_mod.state();
         const device = core.device;
 
+        const height = core_mod.get(core.main_window, .height).?;
+        const width = core_mod.get(core.main_window, .width).?;
         const state = .{
-            .render_width = core_mod.get(core.main_window, .width).?,
-            .render_height = core_mod.get(core.main_window, .height).?,
-            .display_width = core_mod.get(core.main_window, .height).?,
-            .display_height = core_mod.get(core.main_window, .height).?,
+            .render_width = width,
+            .render_height = height,
+            .display_width = height,
+            .display_height = width,
         };
         const buffer = try Buffer(StateUniform).new(@tagName(name) ++ "custom state", state, allocator, device);
         const st_buffers = ShadertoyUniforms{
             .time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device),
             .resolution = try Buffer(Vec3).new(@tagName(name) ++ " resolution", Vec3{
-                .x = @floatFromInt(core_mod.get(core.main_window, .width).?),
-                .y = @floatFromInt(core_mod.get(core.main_window, .height).?),
+                .x = @floatFromInt(width),
+                .y = @floatFromInt(height),
                 .z = 0.0,
             }, allocator, device),
         };
@@ -241,65 +246,32 @@ const Renderer = struct {
         try binding.add(st_buffers.resolution, allocator);
         try binding.init(@tagName(name), device, allocator);
 
+        const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
+        defer shader_module.release();
+        const frag_shader_module = shader_module;
+        const vertex_shader_module = shader_module;
+
+        const color_target = gpu.ColorTargetState{
+            .format = core_mod.get(core.main_window, .framebuffer_format).?,
+            .blend = &gpu.BlendState{},
+            .write_mask = gpu.ColorWriteMaskFlags.all,
+        };
+        const fragment = gpu.FragmentState.init(.{
+            .module = frag_shader_module,
+            .entry_point = "frag_main",
+            .targets = &.{color_target},
+        });
+        const vertex = gpu.VertexState{
+            .module = vertex_shader_module,
+            .entry_point = "vert_main",
+        };
+
         const bind_group_layouts = [_]*gpu.BindGroupLayout{binding.layout.?};
         const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
             .label = binding.label,
             .bind_group_layouts = &bind_group_layouts,
         }));
         defer pipeline_layout.release();
-
-        // const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
-        // defer shader_module.release();
-        // const frag_shader_module = shader_module;
-        // const vertex_shader_module = shader_module;
-
-        const vert = @embedFile("vert.glsl");
-        var compiler = Glslc.Compiler{ .opt = .fast };
-        compiler.stage = .vertex;
-        // try compiler.dump_assembly(allocator, vert);
-        const vertex_bytes = try compiler.compile(allocator, vert, .spirv);
-        defer allocator.free(vertex_bytes);
-        const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
-            .next_in_chain = .{ .spirv_descriptor = &.{
-                .code_size = @intCast(vertex_bytes.len),
-                .code = vertex_bytes.ptr,
-            } },
-            .label = "vert.glsl",
-        });
-        defer vertex_shader_module.release();
-
-        const frag = @embedFile("frag.glsl");
-        compiler.stage = .fragment;
-        // try compiler.dump_assembly(allocator, frag);
-        const frag_bytes = try compiler.compile(allocator, frag, .spirv);
-        defer allocator.free(frag_bytes);
-        const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
-            .next_in_chain = .{ .spirv_descriptor = &.{
-                .code_size = @intCast(frag_bytes.len),
-                .code = frag_bytes.ptr,
-            } },
-            .label = "frag.glsl",
-        });
-        defer frag_shader_module.release();
-
-        const blend = gpu.BlendState{};
-        const color_target = gpu.ColorTargetState{
-            .format = core_mod.get(core.main_window, .framebuffer_format).?,
-            .blend = &blend,
-            .write_mask = gpu.ColorWriteMaskFlags.all,
-        };
-        const fragment = gpu.FragmentState.init(.{
-            .module = frag_shader_module,
-            // .entry_point = "frag_main",
-            .entry_point = "main",
-            .targets = &.{color_target},
-        });
-        const vertex = gpu.VertexState{
-            .module = vertex_shader_module,
-            // .entry_point = "vert_main",
-            .entry_point = "main",
-        };
-
         const pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
             .label = binding.label,
             .fragment = &fragment,
@@ -314,6 +286,7 @@ const Renderer = struct {
             .buffer = buffer,
             .st_buffers = st_buffers,
             .pipeline = pipeline,
+            .shader_fuse = try FsFuse.init("./shaders"),
         });
     }
 
@@ -359,10 +332,89 @@ const Renderer = struct {
         core_mod.schedule(.present_frame);
     }
 
+    fn update_shaders(
+        core_mod: *mach.Core.Mod,
+        self_mod: *Mod,
+    ) !void {
+        const core: *mach.Core = core_mod.state();
+        const device = core.device;
+        const self: *@This() = self_mod.state();
+
+        std.debug.print("updating shaders!\n", .{});
+
+        var compiler = Glslc.Compiler{ .opt = .fast };
+        compiler.stage = .vertex;
+        // try compiler.dump_assembly(allocator, vert);
+        const vertex_bytes = try compiler.compile(
+            allocator,
+            .{ .path = .{ .main = "./shaders/vert.glsl", .include = &[_][]const u8{"./shaders"} } },
+            .spirv,
+        );
+        defer allocator.free(vertex_bytes);
+        const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
+            .next_in_chain = .{ .spirv_descriptor = &.{
+                .code_size = @intCast(vertex_bytes.len),
+                .code = vertex_bytes.ptr,
+            } },
+            .label = "vert.glsl",
+        });
+        defer vertex_shader_module.release();
+
+        compiler.stage = .fragment;
+        // try compiler.dump_assembly(allocator, frag);
+        const frag_bytes = try compiler.compile(
+            allocator,
+            .{ .path = .{ .main = "./shaders/frag.glsl", .include = &[_][]const u8{"./shaders"} } },
+            .spirv,
+        );
+        defer allocator.free(frag_bytes);
+        const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
+            .next_in_chain = .{ .spirv_descriptor = &.{
+                .code_size = @intCast(frag_bytes.len),
+                .code = frag_bytes.ptr,
+            } },
+            .label = "frag.glsl",
+        });
+        defer frag_shader_module.release();
+
+        const color_target = gpu.ColorTargetState{
+            .format = core_mod.get(core.main_window, .framebuffer_format).?,
+            .blend = &gpu.BlendState{},
+            .write_mask = gpu.ColorWriteMaskFlags.all,
+        };
+        const fragment = gpu.FragmentState.init(.{
+            .module = frag_shader_module,
+            .entry_point = "main",
+            .targets = &.{color_target},
+        });
+        const vertex = gpu.VertexState{
+            .module = vertex_shader_module,
+            .entry_point = "main",
+        };
+
+        const bind_group_layouts = [_]*gpu.BindGroupLayout{self.binding.layout.?};
+        const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
+            .label = self.binding.label,
+            .bind_group_layouts = &bind_group_layouts,
+        }));
+        defer pipeline_layout.release();
+        const pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
+            .label = self.binding.label,
+            .fragment = &fragment,
+            .layout = pipeline_layout,
+            .vertex = vertex,
+        });
+        self.pipeline.release();
+        self.pipeline = pipeline;
+    }
+
     fn tick(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
         defer self_mod.schedule(.render_frame);
 
         const self: *@This() = self_mod.state();
+        if (self.shader_fuse.unfuse()) {
+            self_mod.schedule(.update_shaders);
+        }
 
         var state = &self.buffer.val;
         state.time += self.timer.lap();
@@ -769,7 +821,7 @@ const FsFuse = struct {
     thread: std.Thread,
 
     fn testfn() !void {
-        var watch = try init("./toys");
+        var watch = try init("./shaders");
         defer watch.deinit();
 
         std.time.sleep(std.time.ns_per_s * 10);
@@ -825,11 +877,16 @@ const FsFuse = struct {
                 if (oke != c.FSW_OK) {
                     return error.FswSetFailed;
                 }
+                oke = c.fsw_set_latency(ctx.handle, 1.0);
+                if (oke != c.FSW_OK) {
+                    return error.FswSetFailed;
+                }
                 oke = c.fsw_set_callback(ctx.handle, @ptrCast(&event_callback), ctx);
                 if (oke != c.FSW_OK) {
                     return error.FswSetFailed;
                 }
 
+                std.debug.print("starting monitor\n", .{});
                 oke = c.fsw_start_monitor(ctx.handle);
                 if (oke != c.FSW_OK) {
                     return error.CouldNotStartWatcher;
@@ -837,15 +894,16 @@ const FsFuse = struct {
             }
             fn event_callback(events: [*c]const c.fsw_cevent, num: c_uint, ctx: ?*Ctx) callconv(.C) void {
                 var flags = c.NoOp;
-                flags |= c.Created;
+                // flags |= c.Created;
                 flags |= c.Updated;
-                flags |= c.Removed;
-                flags |= c.Renamed;
-                flags |= c.OwnerModified;
+                // flags |= c.Removed;
+                // flags |= c.Renamed;
+                // flags |= c.OwnerModified;
                 // flags |= c.AttributeModified;
                 // flags |= c.MovedFrom;
                 // flags |= c.MovedTo;
 
+                var valid = false;
                 for (events[0..@intCast(num)]) |event| {
                     for (event.flags[0..event.flags_num]) |f| {
                         if (flags & @as(c_int, @intCast(f)) == 0) {
@@ -854,14 +912,17 @@ const FsFuse = struct {
                         const name = c.fsw_get_event_flag_name(f);
                         std.debug.print("Path: {s}\n", .{event.path});
                         std.debug.print("Event Type: {s}\n", .{std.mem.span(name)});
+                        valid = true;
                     }
                 }
 
-                ctx.?.trigger.fuse();
+                if (valid) {
+                    ctx.?.trigger.fuse();
+                }
             }
         };
 
-        const t = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ ctxt, path });
+        const t = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ctxt});
         return .{
             .ctx = ctxt,
             .thread = t,
@@ -876,7 +937,8 @@ const Fuse = struct {
         self.fused.store(true, .release);
     }
     fn unfuse(self: *@This()) bool {
-        return self.fused.swap(false, .release);
+        const res = self.fused.swap(false, .release);
+        return res;
     }
     fn check(self: *@This()) bool {
         return self.fused.load(.acquire);
@@ -890,7 +952,7 @@ const Glslc = struct {
             .stage = .fragment,
         };
         const shader: []const u8 = @embedFile("frag.glsl");
-        const bytes = try compiler.compile(allocator, shader, .assembly);
+        const bytes = try compiler.compile(allocator, .{ .code = shader }, .assembly);
         defer allocator.free(bytes);
 
         std.debug.print("{s}\n", .{bytes});
@@ -915,6 +977,13 @@ const Glslc = struct {
             assembly,
             spirv,
         };
+        const Code = union(enum) {
+            code: []const u8,
+            path: struct {
+                main: []const u8,
+                include: []const []const u8,
+            },
+        };
 
         fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: []const u8) !void {
             // std.debug.print("{s}\n", .{code});
@@ -923,7 +992,7 @@ const Glslc = struct {
             std.debug.print("{s}\n", .{bytes});
         }
 
-        fn compile(self: @This(), alloc: std.mem.Allocator, code: []const u8, comptime output_type: OutputType) !(switch (output_type) {
+        fn compile(self: @This(), alloc: std.mem.Allocator, code: Code, comptime output_type: OutputType) !(switch (output_type) {
             .spirv => []u32,
             .assembly => []u8,
         }) {
@@ -953,7 +1022,18 @@ const Glslc = struct {
                 try args.append(try alloc.dupe(u8, "-S"));
             }
             try args.append(try alloc.dupe(u8, "-o-"));
-            try args.append(try alloc.dupe(u8, "-"));
+            switch (code) {
+                .code => {
+                    try args.append(try alloc.dupe(u8, "-"));
+                },
+                .path => |paths| {
+                    for (paths.include) |inc| {
+                        try args.append(try alloc.dupe(u8, "-I"));
+                        try args.append(try alloc.dupe(u8, inc));
+                    }
+                    try args.append(try alloc.dupe(u8, paths.main));
+                },
+            }
 
             var child = std.process.Child.init(args.items, alloc);
             child.stdin_behavior = .Pipe;
@@ -971,7 +1051,12 @@ const Glslc = struct {
             defer stdout.close();
             defer stderr.close();
 
-            try stdin.writeAll(code);
+            switch (code) {
+                .code => |bytes| {
+                    try stdin.writeAll(bytes);
+                },
+                .path => {},
+            }
             stdin.close();
 
             const err = try child.wait();
