@@ -353,7 +353,11 @@ const Renderer = struct {
         // _ = compiler.dump_assembly(allocator, vert);
         const vertex_bytes = compiler.compile(
             allocator,
-            .{ .path = .{ .main = "./shaders/vert.glsl", .include = &[_][]const u8{"./shaders"} } },
+            &.{ .path = .{
+                .main = "./shaders/vert.glsl",
+                .include = &[_][]const u8{"./shaders"},
+                .definitions = &[_][]const u8{},
+            } },
             .spirv,
         ) catch |e| {
             std.debug.print("{any}\n", .{e});
@@ -373,7 +377,11 @@ const Renderer = struct {
         // _ = compiler.dump_assembly(allocator, frag);
         const frag_bytes = compiler.compile(
             allocator,
-            .{ .path = .{ .main = "./shaders/frag.glsl", .include = &[_][]const u8{"./shaders"} } },
+            &.{ .path = .{
+                .main = "./shaders/frag.glsl",
+                .include = &[_][]const u8{"./shaders"},
+                .definitions = &[_][]const u8{},
+            } },
             .spirv,
         ) catch |e| {
             std.debug.print("{any}\n", .{e});
@@ -1061,7 +1069,10 @@ const Glslc = struct {
             .stage = .fragment,
         };
         const shader: []const u8 = @embedFile("frag.glsl");
-        const bytes = try compiler.compile(allocator, .{ .code = shader }, .assembly);
+        const bytes = try compiler.compile(allocator, &.{
+            .code = shader,
+            .definitions = &[_][]const u8{},
+        }, .assembly);
         defer allocator.free(bytes);
 
         std.debug.print("{s}\n", .{bytes});
@@ -1087,21 +1098,28 @@ const Glslc = struct {
             spirv,
         };
         const Code = union(enum) {
-            code: []const u8,
+            code: struct {
+                src: []const u8,
+                definitions: []const []const u8,
+            },
             path: struct {
                 main: []const u8,
                 include: []const []const u8,
+                definitions: []const []const u8,
             },
         };
 
         fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: []const u8) !void {
             // std.debug.print("{s}\n", .{code});
-            const bytes = try self.compile(alloc, code, .assembly);
+            const bytes = try self.compile(alloc, &.{
+                .code = code,
+                .definitions = &[_][]const u8{},
+            }, .assembly);
             defer alloc.free(bytes);
             std.debug.print("{s}\n", .{bytes});
         }
 
-        fn compile(self: @This(), alloc: std.mem.Allocator, code: Code, comptime output_type: OutputType) !(switch (output_type) {
+        fn compile(self: @This(), alloc: std.mem.Allocator, code: *const Code, comptime output_type: OutputType) !(switch (output_type) {
             .spirv => []u32,
             .assembly => []u8,
         }) {
@@ -1131,11 +1149,17 @@ const Glslc = struct {
                 try args.append(try alloc.dupe(u8, "-S"));
             }
             try args.append(try alloc.dupe(u8, "-o-"));
-            switch (code) {
-                .code => {
+            switch (code.*) {
+                .code => |src| {
+                    for (src.definitions) |def| {
+                        try args.append(try std.fmt.allocPrint(alloc, "-D{s}", .{def}));
+                    }
                     try args.append(try alloc.dupe(u8, "-"));
                 },
                 .path => |paths| {
+                    for (paths.definitions) |def| {
+                        try args.append(try std.fmt.allocPrint(alloc, "-D{s}", .{def}));
+                    }
                     for (paths.include) |inc| {
                         try args.append(try alloc.dupe(u8, "-I"));
                         try args.append(try alloc.dupe(u8, inc));
@@ -1160,9 +1184,9 @@ const Glslc = struct {
             defer stdout.close();
             defer stderr.close();
 
-            switch (code) {
-                .code => |bytes| {
-                    try stdin.writeAll(bytes);
+            switch (code.*) {
+                .code => |src| {
+                    try stdin.writeAll(src.src);
                 },
                 .path => {},
             }

@@ -80,7 +80,6 @@
       env-packages = pkgs:
         (with pkgs; [
           pkg-config
-          # - [river.nix nixpkgs](https://github.com/NixOS/nixpkgs/blob/nixos-unstable/pkgs/applications/window-managers/river/default.nix#L41)
           zig
           zls
           gdb
