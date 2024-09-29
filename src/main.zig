@@ -279,6 +279,8 @@ const Renderer = struct {
             .vertex = vertex,
         });
 
+        const fuse = try FsFuse.init("./shaders");
+        fuse.ctx.trigger.fuse();
         self_mod.init(.{
             .timer = try mach.Timer.start(),
 
@@ -286,7 +288,7 @@ const Renderer = struct {
             .buffer = buffer,
             .st_buffers = st_buffers,
             .pipeline = pipeline,
-            .shader_fuse = try FsFuse.init("./shaders"),
+            .shader_fuse = fuse,
         });
     }
 
@@ -307,10 +309,14 @@ const Renderer = struct {
 
         self.binding.update(encoder);
 
-        const sky_blue_background = gpu.Color{ .r = 40.0 / 255.0, .g = 40.0 / 255.0, .b = 40.0 / 255.0, .a = 1 };
         const color_attachments = [_]gpu.RenderPassColorAttachment{.{
             .view = back_buffer_view,
-            .clear_value = sky_blue_background,
+            .clear_value = gpu.Color{
+                .r = 40.0 / 255.0,
+                .g = 40.0 / 255.0,
+                .b = 40.0 / 255.0,
+                .a = 1,
+            },
             .load_op = .clear,
             .store_op = .store,
         }};
@@ -344,12 +350,15 @@ const Renderer = struct {
 
         var compiler = Glslc.Compiler{ .opt = .fast };
         compiler.stage = .vertex;
-        // try compiler.dump_assembly(allocator, vert);
-        const vertex_bytes = try compiler.compile(
+        // _ = compiler.dump_assembly(allocator, vert);
+        const vertex_bytes = compiler.compile(
             allocator,
             .{ .path = .{ .main = "./shaders/vert.glsl", .include = &[_][]const u8{"./shaders"} } },
             .spirv,
-        );
+        ) catch |e| {
+            std.debug.print("{any}\n", .{e});
+            return;
+        };
         defer allocator.free(vertex_bytes);
         const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
             .next_in_chain = .{ .spirv_descriptor = &.{
@@ -361,12 +370,15 @@ const Renderer = struct {
         defer vertex_shader_module.release();
 
         compiler.stage = .fragment;
-        // try compiler.dump_assembly(allocator, frag);
-        const frag_bytes = try compiler.compile(
+        // _ = compiler.dump_assembly(allocator, frag);
+        const frag_bytes = compiler.compile(
             allocator,
             .{ .path = .{ .main = "./shaders/frag.glsl", .include = &[_][]const u8{"./shaders"} } },
             .spirv,
-        );
+        ) catch |e| {
+            std.debug.print("{any}\n", .{e});
+            return;
+        };
         defer allocator.free(frag_bytes);
         const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
             .next_in_chain = .{ .spirv_descriptor = &.{
@@ -532,6 +544,9 @@ pub fn main() !void {
     // try Glslc.testfn();
     // try Shadertoy.testfn();
     // try FsFuse.testfn();
+    // if (true) {
+    //     return;
+    // }
 
     try mach.core.initModule();
     while (try mach.core.tick()) {}
