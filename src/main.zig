@@ -745,20 +745,22 @@ const Shadertoy = struct {
             allocator.free(self.cache_dir);
         }
         fn shader(self: *@This(), id: []const u8) !Toy.Json {
-            const path_no_ext = try std.fs.path.join(allocator, &[_][]const u8{
+            const dir = try std.fs.path.join(allocator, &[_][]const u8{
                 self.cache_dir,
                 id,
             });
-            defer allocator.free(path_no_ext);
-            const path = try std.mem.concat(allocator, u8, &[_][]const u8{
-                path_no_ext,
-                ".json",
+            defer allocator.free(dir);
+            const path = try std.fs.path.join(allocator, &[_][]const u8{
+                dir,
+                "toy.json",
             });
             defer allocator.free(path);
+
             const cwd = std.fs.cwd();
             var file = cwd.openFile(path, .{}) catch {
                 const json = try get_shader_json(id);
                 defer allocator.free(json);
+                try cwd.makePath(dir);
                 const file = try cwd.createFile(path, .{});
                 defer file.close();
 
