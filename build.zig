@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
     const mach_module = lib_mach.module("mach");
 
     const exe = b.addExecutable(.{
-        .name = "mach-test",
+        .name = "zhadertoy",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
