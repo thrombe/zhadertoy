@@ -552,6 +552,67 @@ pub fn main() !void {
     while (try mach.core.tick()) {}
 }
 
+const JsonHelpers = struct {
+    const StringBool = enum {
+        true,
+        false,
+
+        pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+            switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
+                .string, .allocated_string => |field| {
+                    if (std.mem.eql(u8, field, "true")) {
+                        return .true;
+                    } else if (std.mem.eql(u8, field, "false")) {
+                        return .false;
+                    } else {
+                        return error.InvalidEnumTag;
+                    }
+                },
+                else => |token| {
+                    std.debug.print("{any}\n", .{token});
+                    return error.UnexpectedToken;
+                },
+            }
+        }
+    };
+
+    fn parseUnionAsStringWithUnknown(t: type, alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !t {
+        switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
+            .string, .allocated_string => |field| {
+                inline for (@typeInfo(t).Union.fields) |typ| {
+                    comptime if (std.meta.stringToEnum(std.meta.Tag(t), typ.name).? == .unknown) {
+                        continue;
+                    };
+
+                    if (std.mem.eql(u8, field, typ.name)) {
+                        return @unionInit(t, typ.name, {});
+                    }
+                }
+                return .{ .unknown = field };
+            },
+            else => return error.UnexpectedToken,
+        }
+    }
+    fn parseEnumAsString(t: type, alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !t {
+        @setEvalBranchQuota(2000);
+        switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
+            .string, .allocated_string => |field| {
+                inline for (@typeInfo(t).Enum.fields) |typ| {
+                    if (std.mem.eql(u8, field, typ.name)) {
+                        return comptime std.meta.stringToEnum(t, typ.name).?;
+                    }
+                }
+                std.debug.print("unknown type: {s}\n", .{field});
+                return error.InvalidEnumTag;
+            },
+            else => |token| {
+                std.debug.print("{any}\n", .{token});
+                return error.UnexpectedToken;
+            },
+        }
+    }
+};
+
 const Shadertoy = struct {
     // https://www.shadertoy.com/howto
     const base = "https://www.shadertoy.com";
@@ -565,7 +626,7 @@ const Shadertoy = struct {
     fn testfn() !void {
         var cache = try Cached.init("./toys/shadertoy");
         defer cache.deinit();
-        const toy = try cache.shader("4t3SzN");
+        const toy = try cache.shader("lXjczd");
         defer toy.deinit();
         // const toy = try Toy.from_file("./toys/new.json");
         // defer toy.deinit();
@@ -584,6 +645,54 @@ const Shadertoy = struct {
                 description: []const u8,
             },
             renderpass: []struct {
+                inputs: []struct {
+                    id: u32,
+                    src: []const u8,
+                    channel: u32, // 0..=3
+                    published: u32, // 1?
+                    sampler: struct {
+                        filter: enum {
+                            linear,
+                            mipmap, // ctype: volume, cubemap, texture
+
+                            pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                                return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+                            }
+                        },
+                        wrap: enum {
+                            clamp,
+                            repeat, // ctype: texture, volume
+
+                            pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                                return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+                            }
+                        },
+                        vflip: JsonHelpers.StringBool, // ctype: cubemap is false
+                        srgb: JsonHelpers.StringBool, // all false
+                        internal: enum {
+                            byte,
+
+                            pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                                return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+                            }
+                        },
+                    },
+                    ctype: enum {
+                        texture,
+                        cubemap,
+                        buffer,
+                        volume,
+                        mic,
+                        webcam,
+                        video,
+                        music,
+                        keyboard,
+
+                        pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+                            return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+                        }
+                    },
+                },
                 outputs: []struct {
                     id: u32,
                     channel: u32,
@@ -591,32 +700,15 @@ const Shadertoy = struct {
                 code: []const u8,
                 name: []const u8,
                 description: []const u8,
-                type: union(enum) {
+                type: enum {
                     image,
                     common,
                     buffer,
                     cubemap,
-                    volume,
-                    texture,
-                    keyboard,
-                    unknown: []const u8,
+                    sound,
 
                     pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
-                        switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
-                            .string, .allocated_string => |field| {
-                                inline for (@typeInfo(@This()).Union.fields) |typ| {
-                                    comptime if (std.meta.stringToEnum(std.meta.Tag(@This()), typ.name).? == .unknown) {
-                                        continue;
-                                    };
-
-                                    if (std.mem.eql(u8, field, typ.name)) {
-                                        return @unionInit(@This(), typ.name, {});
-                                    }
-                                }
-                                return .{ .unknown = field };
-                            },
-                            else => return error.UnexpectedToken,
-                        }
+                        return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
                     }
                 },
             },
