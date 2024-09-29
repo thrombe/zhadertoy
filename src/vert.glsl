@@ -1,8 +1,5 @@
 #version 450
 
-float iTime = 0.0f;
-vec3 iResolution = vec3(0.0f);
-
 layout(location = 0) out vec2 fragCoord;
 // layout(location = 0) in vec3 pos;
 

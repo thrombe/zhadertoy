@@ -632,8 +632,33 @@ const Shadertoy = struct {
     };
 
     fn testfn() !void {
+        return try testfn2();
+    }
+
+    fn testfn2() !void {
+        const cwd = std.fs.cwd();
+        const id = "4td3zj";
+        const toys = "./toys/shadertoy";
+
+        var cache = try Cached.init(toys);
+        defer cache.deinit();
+        var toy = try cache.shader(id);
+        defer toy.deinit();
+        const cwd_real = try cwd.realpathAlloc(allocator, "./");
+        defer allocator.free(cwd_real);
+        var man = try ToyMan.init(try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" }));
+        defer man.deinit();
+
+        const target = try cwd.realpathAlloc(allocator, toys ++ "/" ++ id);
+        defer allocator.free(target);
+        var ptoy = try man.prepare_toy(&toy.value, target);
+        defer ptoy.deinit();
+    }
+
+    fn testfn1() !void {
         var cache = try Cached.init("./toys/shadertoy");
         defer cache.deinit();
+        // const toy = try cache.shader("4t3SzN");
         const toy = try cache.shader("lXjczd");
         defer toy.deinit();
         // const toy = try Toy.from_file("./toys/new.json");
@@ -641,6 +666,117 @@ const Shadertoy = struct {
 
         std.debug.print("{s}\n", .{toy.value.Shader.renderpass[0].code});
     }
+
+    const ToyMan = struct {
+        // path where the toy should be simlinked
+        playground: []const u8,
+
+        const vert_glsl = @embedFile("./vert.glsl");
+        const frag_glsl = @embedFile("./frag.glsl");
+
+        fn init(playground: []const u8) !@This() {
+            return .{
+                .playground = playground,
+            };
+        }
+        fn deinit(self: *@This()) void {
+            allocator.free(self.playground);
+        }
+
+        // file naming:
+        //   - virt.glsl: vertex shader entry point (not available on shadertoy)
+        //   - frag.glsl: fragment shader entry point (not available on shadertoy)
+        //   - common.glsl
+        //   - image.glsl
+        //   - sound.glsl
+        //   - cube.glsl
+        //   - buffer1A.glsl: where the '1' represents execution order of the buffers
+        //       (shadertoy buffers ABCD can be in any order, but they execute in the order they are defined in)
+        fn prepare_toy(self: *@This(), toy: *Toy, dir_path: []const u8) !ActiveToy {
+            var dir = try std.fs.openDirAbsolute(dir_path, .{ .no_follow = true });
+            defer dir.close();
+
+            var has_common: bool = false;
+            var buffers = std.ArrayList(ActiveToy.Buffer).init(allocator);
+            errdefer buffers.deinit();
+
+            for (toy.Shader.renderpass) |pass| {
+                switch (pass.type) {
+                    .common => {
+                        has_common = true;
+
+                        var buf = try dir.createFile("common.glsl", .{});
+                        defer buf.close();
+
+                        try buf.writeAll(pass.code);
+                    },
+                    .buffer => {
+                        const name = try std.fmt.allocPrint(
+                            allocator,
+                            "buffer{d}{c}.glsl",
+                            .{ buffers.items.len + 1, pass.name[pass.name.len - 1] },
+                        );
+
+                        var buf = try dir.createFile(name, .{});
+                        defer buf.close();
+
+                        try buf.writeAll(pass.code);
+
+                        try buffers.append(.{
+                            .name = name,
+                        });
+                    },
+                    .image => {
+                        var buf = try dir.createFile("image.glsl", .{});
+                        defer buf.close();
+
+                        try buf.writeAll(pass.code);
+                    },
+                    else => {
+                        std.debug.print("unimplemented renderpass type: {any}\n", .{pass.type});
+                    },
+                }
+            }
+
+            var vert = try dir.createFile("vert.glsl", .{});
+            defer vert.close();
+            try vert.writeAll(vert_glsl);
+
+            var frag = try dir.createFile("frag.glsl", .{});
+            defer frag.close();
+            try frag.writeAll(frag_glsl);
+
+            _ = dir.deleteFile(self.playground) catch {};
+            try std.fs.symLinkAbsolute(
+                dir_path,
+                self.playground,
+                .{ .is_directory = true },
+            );
+
+            return .{
+                .has_common = has_common,
+                .buffers = try buffers.toOwnedSlice(),
+            };
+        }
+    };
+
+    const ActiveToy = struct {
+        has_common: bool,
+        buffers: []Buffer,
+
+        const Buffer = struct {
+            name: []const u8,
+
+            fn deinit(self: *@This()) void {
+                allocator.free(self.name);
+            }
+        };
+
+        fn deinit(self: *@This()) void {
+            for (self.buffers) |*buf| buf.deinit();
+            allocator.free(self.buffers);
+        }
+    };
 
     const Toy = struct {
         const Json = std.json.Parsed(@This());
