@@ -652,16 +652,20 @@ const Shadertoy = struct {
                 username: []const u8,
                 description: []const u8,
             },
+
+            // passes execute in the order they are defined. outputs from one pass may go
+            // as inputs to next pass if defined
             renderpass: []struct {
                 inputs: []struct {
                     id: u32,
                     src: []const u8,
-                    channel: u32, // 0..=3
+                    channel: u2, // 0..=3
                     published: u32, // 1?
                     sampler: struct {
                         filter: enum {
+                            nearest,
                             linear,
-                            mipmap, // ctype: volume, cubemap, texture
+                            mipmap, // default ctype: volume, cubemap, texture
 
                             pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
                                 return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
@@ -669,14 +673,14 @@ const Shadertoy = struct {
                         },
                         wrap: enum {
                             clamp,
-                            repeat, // ctype: texture, volume
+                            repeat, // default ctype: texture, volume
 
                             pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
                                 return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
                             }
                         },
-                        vflip: JsonHelpers.StringBool, // ctype: cubemap is false
-                        srgb: JsonHelpers.StringBool, // all false
+                        vflip: JsonHelpers.StringBool, // default ctype: cubemap is false
+                        srgb: JsonHelpers.StringBool, // default all false
                         internal: enum {
                             byte,
 
@@ -703,16 +707,28 @@ const Shadertoy = struct {
                 },
                 outputs: []struct {
                     id: u32,
+
+                    // idk what this is. always seems to be 0??
                     channel: u32,
                 },
                 code: []const u8,
                 name: []const u8,
                 description: []const u8,
+
+                // passes in order: buffer, buffer, buffer, buffer, cubemap, image, sound
                 type: enum {
-                    image,
+                    // shared by all shaders
                     common,
+
+                    // - [Shadertoy Tutorial](https://inspirnathan.com/posts/62-shadertoy-tutorial-part-15)
+                    // if buffer A uses buffer A as input, last frame's buffer A goes in
                     buffer,
+
                     cubemap,
+
+                    // this is displayed on screen
+                    image,
+
                     sound,
 
                     pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
