@@ -363,7 +363,7 @@ const Renderer = struct {
             allocator,
             &.{ .path = .{
                 .main = "./shaders/vert.glsl",
-                .include = &[_][]const u8{"./shaders"},
+                .include = &[_][]const u8{config.paths.playground},
                 .definitions = &[_][]const u8{},
             } },
             .spirv,
@@ -387,7 +387,7 @@ const Renderer = struct {
             allocator,
             &.{ .path = .{
                 .main = "./shaders/frag.glsl",
-                .include = &[_][]const u8{"./shaders"},
+                .include = &[_][]const u8{config.paths.playground},
                 .definitions = &[_][]const u8{},
             } },
             .spirv,
@@ -560,9 +560,6 @@ const App = struct {
 };
 
 pub fn main() !void {
-    defer {
-        _ = gpa.deinit();
-    }
     // try Glslang.testfn();
     // try Dawn.testfn();
     // try Shaderc.testfn();
@@ -575,6 +572,9 @@ pub fn main() !void {
 
     try mach.core.initModule();
     while (try mach.core.tick()) {}
+
+    // no defer cuz we don't want to print leaks when we error out
+    _ = gpa.deinit();
 }
 
 const JsonHelpers = struct {
@@ -965,7 +965,14 @@ const Shadertoy = struct {
         },
 
         fn from_json(json: []const u8) !Json {
-            const toy = try std.json.parseFromSlice(@This(), allocator, json, json_parse_ops);
+            const toy = std.json.parseFromSlice(@This(), allocator, json, json_parse_ops) catch |e| {
+                const err = std.json.parseFromSlice(struct { Error: []const u8 }, allocator, json, json_parse_ops) catch {
+                    return e;
+                };
+                defer err.deinit();
+                std.debug.print("shadertoy error: {s}\n", .{err.value.Error});
+                return error.ShaderNotAccessible;
+            };
             return toy;
         }
 

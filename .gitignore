@@ -1,8 +1,12 @@
 
 /.direnv
+
 /zig-out
 /zig-cache
 /.zig-cache
+
 /tmp
+
 /toys/shadertoy
 /toys/zhadertoy
+/shaders
