@@ -197,6 +197,8 @@ const Renderer = struct {
 
     timer: mach.Timer,
     shader_fuse: FsFuse,
+    toyman: Shadertoy.ToyMan,
+    shadertoy_cache: Shadertoy.Cached,
 
     pipeline: *gpu.RenderPipeline,
     binding: Binding,
@@ -208,6 +210,8 @@ const Renderer = struct {
         self.pipeline.release();
         self.binding.deinit(allocator);
         self.shader_fuse.deinit();
+        self.toyman.deinit();
+        self.shadertoy_cache.deinit();
 
         // buffer's interface is already in self.binding
         // self.buffer.deinit(allocator);
@@ -281,14 +285,20 @@ const Renderer = struct {
 
         const fuse = try FsFuse.init("./shaders");
         fuse.ctx.trigger.fuse();
+        const cache = try Shadertoy.Cached.init("./toys/shadertoy");
+        const cwd_real = try std.fs.cwd().realpathAlloc(allocator, "./");
+        defer allocator.free(cwd_real);
+        const man = try Shadertoy.ToyMan.init(try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" }));
         self_mod.init(.{
             .timer = try mach.Timer.start(),
+            .shader_fuse = fuse,
+            .toyman = man,
+            .shadertoy_cache = cache,
 
             .binding = binding,
             .buffer = buffer,
             .st_buffers = st_buffers,
             .pipeline = pipeline,
-            .shader_fuse = fuse,
         });
     }
 
@@ -482,6 +492,28 @@ const Renderer = struct {
                     switch (ev.key) {
                         .escape => {
                             core_mod.schedule(.exit);
+                        },
+                        .one => {
+                            const id = "4td3zj";
+                            var toy = try self.shadertoy_cache.shader(id);
+                            defer toy.deinit();
+                            const target = try std.fs.cwd().realpathAlloc(allocator, "./toys/shadertoy" ++ "/" ++ id);
+                            defer allocator.free(target);
+                            var active = try self.toyman.prepare_toy(&toy.value, target);
+                            defer active.deinit();
+                            try self.shader_fuse.restart("./shaders");
+                            self.shader_fuse.ctx.trigger.fuse();
+                        },
+                        .two => {
+                            const id = "4t3SzN";
+                            var toy = try self.shadertoy_cache.shader(id);
+                            defer toy.deinit();
+                            const target = try std.fs.cwd().realpathAlloc(allocator, "./toys/shadertoy" ++ "/" ++ id);
+                            defer allocator.free(target);
+                            var active = try self.toyman.prepare_toy(&toy.value, target);
+                            defer active.deinit();
+                            try self.shader_fuse.restart("./shaders");
+                            self.shader_fuse.ctx.trigger.fuse();
                         },
                         else => {},
                     }
@@ -1147,6 +1179,10 @@ const FsFuse = struct {
         return self.ctx.trigger.check();
     }
 
+    fn restart(self: *@This(), path: [:0]const u8) !void {
+        self.deinit();
+        self.* = try init(path);
+    }
     fn start(path: [:0]const u8) !@This() {
         const ok = c.fsw_init_library();
         if (ok != c.FSW_OK) {
