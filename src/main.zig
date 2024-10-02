@@ -15,6 +15,14 @@ pub const modules = .{
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 var allocator = gpa.allocator();
 
+const config = .{
+    .paths = .{
+        .toys = "./toys",
+        .shadertoys = "./toys/shadertoy",
+        .playground = "./shaders",
+    },
+};
+
 const Renderer = struct {
     pub const name = .renderer;
     pub const systems = .{
@@ -196,9 +204,7 @@ const Renderer = struct {
     };
 
     timer: mach.Timer,
-    shader_fuse: FsFuse,
     toyman: Shadertoy.ToyMan,
-    shadertoy_cache: Shadertoy.Cached,
 
     pipeline: *gpu.RenderPipeline,
     binding: Binding,
@@ -209,9 +215,7 @@ const Renderer = struct {
         const self: *@This() = self_mod.state();
         self.pipeline.release();
         self.binding.deinit(allocator);
-        self.shader_fuse.deinit();
         self.toyman.deinit();
-        self.shadertoy_cache.deinit();
 
         // buffer's interface is already in self.binding
         // self.buffer.deinit(allocator);
@@ -283,17 +287,10 @@ const Renderer = struct {
             .vertex = vertex,
         });
 
-        const fuse = try FsFuse.init("./shaders");
-        fuse.ctx.trigger.fuse();
-        const cache = try Shadertoy.Cached.init("./toys/shadertoy");
-        const cwd_real = try std.fs.cwd().realpathAlloc(allocator, "./");
-        defer allocator.free(cwd_real);
-        const man = try Shadertoy.ToyMan.init(try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" }));
+        const man = try Shadertoy.ToyMan.init();
         self_mod.init(.{
             .timer = try mach.Timer.start(),
-            .shader_fuse = fuse,
             .toyman = man,
-            .shadertoy_cache = cache,
 
             .binding = binding,
             .buffer = buffer,
@@ -442,7 +439,7 @@ const Renderer = struct {
         defer self_mod.schedule(.render_frame);
 
         const self: *@This() = self_mod.state();
-        if (self.shader_fuse.unfuse()) {
+        if (self.toyman.shader_fuse.unfuse()) {
             self_mod.schedule(.update_shaders);
         }
 
@@ -494,26 +491,10 @@ const Renderer = struct {
                             core_mod.schedule(.exit);
                         },
                         .one => {
-                            const id = "4td3zj";
-                            var toy = try self.shadertoy_cache.shader(id);
-                            defer toy.deinit();
-                            const target = try std.fs.cwd().realpathAlloc(allocator, "./toys/shadertoy" ++ "/" ++ id);
-                            defer allocator.free(target);
-                            var active = try self.toyman.prepare_toy(&toy.value, target);
-                            defer active.deinit();
-                            try self.shader_fuse.restart("./shaders");
-                            self.shader_fuse.ctx.trigger.fuse();
+                            try self.toyman.load_by_id("4td3zj");
                         },
                         .two => {
-                            const id = "4t3SzN";
-                            var toy = try self.shadertoy_cache.shader(id);
-                            defer toy.deinit();
-                            const target = try std.fs.cwd().realpathAlloc(allocator, "./toys/shadertoy" ++ "/" ++ id);
-                            defer allocator.free(target);
-                            var active = try self.toyman.prepare_toy(&toy.value, target);
-                            defer active.deinit();
-                            try self.shader_fuse.restart("./shaders");
-                            self.shader_fuse.ctx.trigger.fuse();
+                            try self.toyman.load_by_id("4t3SzN");
                         },
                         else => {},
                     }
@@ -702,17 +683,43 @@ const Shadertoy = struct {
     const ToyMan = struct {
         // path where the toy should be simlinked
         playground: []const u8,
+        shader_fuse: FsFuse,
+        shader_cache: Shadertoy.Cached,
 
         const vert_glsl = @embedFile("./vert.glsl");
         const frag_glsl = @embedFile("./frag.glsl");
 
-        fn init(playground: []const u8) !@This() {
+        fn init() !@This() {
+            const cwd_real = try std.fs.cwd().realpathAlloc(allocator, "./");
+            defer allocator.free(cwd_real);
+            const playground = try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" });
+
+            const fuse = try FsFuse.init(config.paths.playground);
+            fuse.ctx.trigger.fuse();
+            const cache = try Shadertoy.Cached.init(config.paths.shadertoys);
             return .{
                 .playground = playground,
+                .shader_fuse = fuse,
+                .shader_cache = cache,
             };
         }
         fn deinit(self: *@This()) void {
+            self.shader_fuse.deinit();
+            self.shader_cache.deinit();
             allocator.free(self.playground);
+        }
+
+        fn load_by_id(self: *@This(), id: []const u8) !void {
+            var toy = try self.shader_cache.shader(id);
+            defer toy.deinit();
+            const path = try std.fs.path.join(allocator, &[_][]const u8{ config.paths.shadertoys, id });
+            defer allocator.free(path);
+            const target = try std.fs.cwd().realpathAlloc(allocator, path);
+            defer allocator.free(target);
+            var active = try self.prepare_toy(&toy.value, target);
+            defer active.deinit();
+            try self.shader_fuse.restart(config.paths.playground);
+            self.shader_fuse.ctx.trigger.fuse();
         }
 
         // file naming:
@@ -1183,6 +1190,7 @@ const FsFuse = struct {
         self.deinit();
         self.* = try init(path);
     }
+
     fn start(path: [:0]const u8) !@This() {
         const ok = c.fsw_init_library();
         if (ok != c.FSW_OK) {
