@@ -19,6 +19,7 @@ const config = .{
     .paths = .{
         .toys = "./toys",
         .shadertoys = "./toys/shadertoy",
+        .zhadertoys = "./toys/zhadertoy",
         .playground = "./shaders",
     },
 };
@@ -491,10 +492,13 @@ const Renderer = struct {
                             core_mod.schedule(.exit);
                         },
                         .one => {
-                            try self.toyman.load_by_id("4td3zj");
+                            try self.toyman.load_shadertoy("4td3zj");
                         },
                         .two => {
-                            try self.toyman.load_by_id("4t3SzN");
+                            try self.toyman.load_shadertoy("4t3SzN");
+                        },
+                        .zero => {
+                            try self.toyman.load_zhadertoy("new");
                         },
                         else => {},
                     }
@@ -709,15 +713,36 @@ const Shadertoy = struct {
             allocator.free(self.playground);
         }
 
-        fn load_by_id(self: *@This(), id: []const u8) !void {
+        fn load_shadertoy(self: *@This(), id: []const u8) !void {
             var toy = try self.shader_cache.shader(id);
             defer toy.deinit();
+
             const path = try std.fs.path.join(allocator, &[_][]const u8{ config.paths.shadertoys, id });
             defer allocator.free(path);
             const target = try std.fs.cwd().realpathAlloc(allocator, path);
             defer allocator.free(target);
+
             var active = try self.prepare_toy(&toy.value, target);
             defer active.deinit();
+
+            try self.shader_fuse.restart(config.paths.playground);
+            self.shader_fuse.ctx.trigger.fuse();
+        }
+
+        fn load_zhadertoy(self: *@This(), id: []const u8) !void {
+            const path = try std.fs.path.join(allocator, &[_][]const u8{ config.paths.zhadertoys, id });
+            defer allocator.free(path);
+            const target = try std.fs.cwd().realpathAlloc(allocator, path);
+            defer allocator.free(target);
+
+            const toypath = try std.fs.path.join(allocator, &[_][]const u8{ path, "toy.json" });
+            defer allocator.free(toypath);
+            var toy = try Shadertoy.Toy.from_file(toypath);
+            defer toy.deinit();
+
+            var active = try self.prepare_toy(&toy.value, target);
+            defer active.deinit();
+
             try self.shader_fuse.restart(config.paths.playground);
             self.shader_fuse.ctx.trigger.fuse();
         }
