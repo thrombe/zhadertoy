@@ -696,6 +696,12 @@ const Shadertoy = struct {
             var dir = try std.fs.openDirAbsolute(dir_path, .{ .no_follow = true });
             defer dir.close();
 
+            // testing if frag exists to figure out if we need to prep or load the toy
+            const prep = blk: {
+                dir.access("frag.glsl", .{}) catch break :blk true;
+                break :blk false;
+            };
+
             var has_common: bool = false;
             var buffers = std.ArrayList(ActiveToy.Buffer).init(allocator);
             errdefer buffers.deinit();
@@ -704,6 +710,10 @@ const Shadertoy = struct {
                 switch (pass.type) {
                     .common => {
                         has_common = true;
+
+                        if (!prep) {
+                            continue;
+                        }
 
                         var buf = try dir.createFile("common.glsl", .{});
                         defer buf.close();
@@ -717,16 +727,22 @@ const Shadertoy = struct {
                             .{ buffers.items.len + 1, pass.name[pass.name.len - 1] },
                         );
 
-                        var buf = try dir.createFile(name, .{});
-                        defer buf.close();
+                        if (prep) {
+                            var buf = try dir.createFile(name, .{});
+                            defer buf.close();
 
-                        try buf.writeAll(pass.code);
+                            try buf.writeAll(pass.code);
+                        }
 
                         try buffers.append(.{
                             .name = name,
                         });
                     },
                     .image => {
+                        if (!prep) {
+                            continue;
+                        }
+
                         var buf = try dir.createFile("image.glsl", .{});
                         defer buf.close();
 
@@ -738,15 +754,25 @@ const Shadertoy = struct {
                 }
             }
 
-            var vert = try dir.createFile("vert.glsl", .{});
-            defer vert.close();
-            try vert.writeAll(vert_glsl);
+            if (prep) {
+                var vert = try dir.createFile("vert.glsl", .{});
+                defer vert.close();
+                try vert.writeAll(vert_glsl);
 
-            var frag = try dir.createFile("frag.glsl", .{});
-            defer frag.close();
-            try frag.writeAll(frag_glsl);
+                var frag = try dir.createFile("frag.glsl", .{});
+                defer frag.close();
+                try frag.writeAll(frag_glsl);
+            }
 
-            _ = dir.deleteFile(self.playground) catch {};
+            // ignore if path does not exist.
+            dir.deleteFile(self.playground) catch |e| {
+                switch (e) {
+                    error.FileNotFound => {},
+                    else => {
+                        return e;
+                    },
+                }
+            };
             try std.fs.symLinkAbsolute(
                 dir_path,
                 self.playground,
@@ -995,7 +1021,7 @@ const Shadertoy = struct {
         defer req.deinit();
         try req.send();
         // try req.finish();
-        // try req.write()
+        // try req.write();
         try req.wait();
 
         var body = std.ArrayList(u8).init(allocator);
