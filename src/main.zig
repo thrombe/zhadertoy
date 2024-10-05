@@ -58,15 +58,11 @@ const Renderer = struct {
         vtable: *const struct {
             update: *const fn (any_self: *anyopaque, encoder: *gpu.CommandEncoder) void,
             deinit: *const fn (any_self: *anyopaque, alloc: std.mem.Allocator) void,
-            size: *const fn () usize,
-            buf: *const fn (any_self: *anyopaque) *gpu.Buffer,
+            bindEntry: *const fn (any_self: *anyopaque, binding: u32) gpu.BindGroup.Entry,
         },
 
-        fn size(self: *@This()) usize {
-            return self.vtable.size();
-        }
-        fn buf(self: *@This()) *gpu.Buffer {
-            return self.vtable.buf(self.ptr);
+        fn bindEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
+            return self.vtable.bindEntry(self.ptr, binding);
         }
         fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
             self.vtable.update(self.ptr, encoder);
@@ -97,11 +93,8 @@ const Renderer = struct {
                 };
                 return buff;
             }
-            fn size() usize {
-                return @sizeOf(typ);
-            }
-            fn buf(self: *@This()) *gpu.Buffer {
-                return self.buffer;
+            fn bindEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
+                return gpu.BindGroup.Entry.buffer(binding, self.buffer, 0, @sizeOf(typ));
             }
             fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
                 encoder.writeBuffer(self.buffer, 0, &[_]typ{self.val});
@@ -116,8 +109,7 @@ const Renderer = struct {
                     .vtable = &.{
                         .update = @ptrCast(&update),
                         .deinit = @ptrCast(&@This().deinit),
-                        .size = @ptrCast(&size),
-                        .buf = @ptrCast(&buf),
+                        .bindEntry = @ptrCast(&bindEntry),
                     },
                 };
             }
@@ -153,8 +145,7 @@ const Renderer = struct {
                 );
                 try layout_entries.append(alloc, bind_group_layout_entry);
 
-                const bind_group_entry = gpu.BindGroup.Entry.buffer(@intCast(i), buf.buf(), 0, buf.size());
-                try bind_group_entries.append(alloc, bind_group_entry);
+                try bind_group_entries.append(alloc, buf.bindEntry(@intCast(i)));
             }
 
             const bind_group_layout = device.createBindGroupLayout(
