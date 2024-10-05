@@ -356,6 +356,17 @@ const Renderer = struct {
 
         std.debug.print("updating shaders!\n", .{});
 
+        var definitions = std.ArrayList([]const u8).init(allocator);
+        defer {
+            for (definitions.items) |def| {
+                allocator.free(def);
+            }
+            definitions.deinit();
+        }
+        if (self.toyman.active_toy.has_common) {
+            try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
+        }
+
         var compiler = Glslc.Compiler{ .opt = .fast };
         compiler.stage = .vertex;
         // _ = compiler.dump_assembly(allocator, vert);
@@ -364,7 +375,7 @@ const Renderer = struct {
             &.{ .path = .{
                 .main = "./shaders/vert.glsl",
                 .include = &[_][]const u8{config.paths.playground},
-                .definitions = &[_][]const u8{},
+                .definitions = definitions.items,
             } },
             .spirv,
         ) catch |e| {
@@ -388,7 +399,7 @@ const Renderer = struct {
             &.{ .path = .{
                 .main = "./shaders/frag.glsl",
                 .include = &[_][]const u8{config.paths.playground},
-                .definitions = &[_][]const u8{},
+                .definitions = definitions.items,
             } },
             .spirv,
         ) catch |e| {
@@ -618,6 +629,7 @@ const JsonHelpers = struct {
             else => return error.UnexpectedToken,
         }
     }
+
     fn parseEnumAsString(t: type, alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !t {
         @setEvalBranchQuota(2000);
         switch (try source.nextAlloc(alloc, options.allocate orelse .alloc_if_needed)) {
@@ -689,6 +701,7 @@ const Shadertoy = struct {
         playground: []const u8,
         shader_fuse: FsFuse,
         shader_cache: Shadertoy.Cached,
+        active_toy: ActiveToy,
 
         const vert_glsl = @embedFile("./vert.glsl");
         const frag_glsl = @embedFile("./frag.glsl");
@@ -699,17 +712,25 @@ const Shadertoy = struct {
             const playground = try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" });
 
             const fuse = try FsFuse.init(config.paths.playground);
+            // TODO: fuse() + default self.active_toy won't work cuz of things like has_common
             fuse.ctx.trigger.fuse();
             const cache = try Shadertoy.Cached.init(config.paths.shadertoys);
+
             return .{
                 .playground = playground,
                 .shader_fuse = fuse,
                 .shader_cache = cache,
+                .active_toy = .{
+                    .has_common = false,
+                    .buffers = try allocator.alloc(ActiveToy.Buffer, 0),
+                },
             };
         }
+
         fn deinit(self: *@This()) void {
             self.shader_fuse.deinit();
             self.shader_cache.deinit();
+            self.active_toy.deinit();
             allocator.free(self.playground);
         }
 
@@ -722,8 +743,9 @@ const Shadertoy = struct {
             const target = try std.fs.cwd().realpathAlloc(allocator, path);
             defer allocator.free(target);
 
-            var active = try self.prepare_toy(&toy.value, target);
-            defer active.deinit();
+            const active = try prepare_toy(self.playground, &toy.value, target);
+            self.active_toy.deinit();
+            self.active_toy = active;
 
             try self.shader_fuse.restart(config.paths.playground);
             self.shader_fuse.ctx.trigger.fuse();
@@ -740,8 +762,9 @@ const Shadertoy = struct {
             var toy = try Shadertoy.Toy.from_file(toypath);
             defer toy.deinit();
 
-            var active = try self.prepare_toy(&toy.value, target);
-            defer active.deinit();
+            const active = try prepare_toy(self.playground, &toy.value, target);
+            self.active_toy.deinit();
+            self.active_toy = active;
 
             try self.shader_fuse.restart(config.paths.playground);
             self.shader_fuse.ctx.trigger.fuse();
@@ -756,7 +779,7 @@ const Shadertoy = struct {
         //   - cube.glsl
         //   - buffer1A.glsl: where the '1' represents execution order of the buffers
         //       (shadertoy buffers ABCD can be in any order, but they execute in the order they are defined in)
-        fn prepare_toy(self: *@This(), toy: *Toy, dir_path: []const u8) !ActiveToy {
+        fn prepare_toy(playground: []const u8, toy: *Toy, dir_path: []const u8) !ActiveToy {
             var dir = try std.fs.openDirAbsolute(dir_path, .{ .no_follow = true });
             defer dir.close();
 
@@ -829,7 +852,7 @@ const Shadertoy = struct {
             }
 
             // ignore if path does not exist.
-            dir.deleteFile(self.playground) catch |e| {
+            dir.deleteFile(playground) catch |e| {
                 switch (e) {
                     error.FileNotFound => {},
                     else => {
@@ -839,7 +862,7 @@ const Shadertoy = struct {
             };
             try std.fs.symLinkAbsolute(
                 dir_path,
-                self.playground,
+                playground,
                 .{ .is_directory = true },
             );
 
