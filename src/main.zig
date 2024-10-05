@@ -53,16 +53,20 @@ const Renderer = struct {
     // uniform bind group offset must be 256-byte aligned
     const uniform_offset = 256;
 
-    const IBuffer = struct {
+    const IUniform = struct {
         ptr: *anyopaque,
         vtable: *const struct {
             update: *const fn (any_self: *anyopaque, encoder: *gpu.CommandEncoder) void,
             deinit: *const fn (any_self: *anyopaque, alloc: std.mem.Allocator) void,
-            bindEntry: *const fn (any_self: *anyopaque, binding: u32) gpu.BindGroup.Entry,
+            bindGroupLayoutEntry: *const fn (any_self: *anyopaque, binding: u32) gpu.BindGroupLayout.Entry,
+            bindGroupEntry: *const fn (any_self: *anyopaque, binding: u32) gpu.BindGroup.Entry,
         },
 
-        fn bindEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
-            return self.vtable.bindEntry(self.ptr, binding);
+        fn bindGroupLayoutEntry(self: *@This(), binding: u32) gpu.BindGroupLayout.Entry {
+            return self.vtable.bindGroupLayoutEntry(self.ptr, binding);
+        }
+        fn bindGroupEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
+            return self.vtable.bindGroupEntry(self.ptr, binding);
         }
         fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
             self.vtable.update(self.ptr, encoder);
@@ -93,47 +97,9 @@ const Renderer = struct {
                 };
                 return buff;
             }
-            fn bindEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
-                return gpu.BindGroup.Entry.buffer(binding, self.buffer, 0, @sizeOf(typ));
-            }
-            fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
-                encoder.writeBuffer(self.buffer, 0, &[_]typ{self.val});
-            }
-            fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
-                self.buffer.release();
-                alloc.destroy(self);
-            }
-            fn interface(self: *@This()) IBuffer {
-                return .{
-                    .ptr = self,
-                    .vtable = &.{
-                        .update = @ptrCast(&update),
-                        .deinit = @ptrCast(&@This().deinit),
-                        .bindEntry = @ptrCast(&bindEntry),
-                    },
-                };
-            }
-        };
-    }
-    const Binding = struct {
-        label: [*:0]const u8,
-        group: ?*gpu.BindGroup = null,
-        layout: ?*gpu.BindGroupLayout = null,
-        buffers: std.ArrayListUnmanaged(IBuffer) = .{},
-
-        fn add(self: *@This(), buffer: anytype, alloc: std.mem.Allocator) !void {
-            const itf: IBuffer = buffer.interface();
-            try self.buffers.append(alloc, itf);
-        }
-        fn init(self: *@This(), label: [*:0]const u8, device: *gpu.Device, alloc: std.mem.Allocator) !void {
-            var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
-            defer layout_entries.deinit(alloc);
-            var bind_group_entries = std.ArrayListUnmanaged(gpu.BindGroup.Entry){};
-            defer bind_group_entries.deinit(alloc);
-
-            for (self.buffers.items, 0..) |*buf, i| {
-                const bind_group_layout_entry = gpu.BindGroupLayout.Entry.buffer(
-                    @intCast(i),
+            fn bindGroupLayoutEntry(_: *@This(), binding: u32) gpu.BindGroupLayout.Entry {
+                return gpu.BindGroupLayout.Entry.buffer(
+                    binding,
                     .{
                         .vertex = true,
                         .fragment = true,
@@ -143,9 +109,50 @@ const Renderer = struct {
                     true,
                     0,
                 );
-                try layout_entries.append(alloc, bind_group_layout_entry);
+            }
+            fn bindGroupEntry(self: *@This(), binding: u32) gpu.BindGroup.Entry {
+                return gpu.BindGroup.Entry.buffer(binding, self.buffer, 0, @sizeOf(typ));
+            }
+            fn update(self: *@This(), encoder: *gpu.CommandEncoder) void {
+                encoder.writeBuffer(self.buffer, 0, &[_]typ{self.val});
+            }
+            fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+                self.buffer.release();
+                alloc.destroy(self);
+            }
+            fn interface(self: *@This()) IUniform {
+                return .{
+                    .ptr = self,
+                    .vtable = &.{
+                        .update = @ptrCast(&update),
+                        .deinit = @ptrCast(&@This().deinit),
+                        .bindGroupLayoutEntry = @ptrCast(&bindGroupLayoutEntry),
+                        .bindGroupEntry = @ptrCast(&bindGroupEntry),
+                    },
+                };
+            }
+        };
+    }
+    const Binding = struct {
+        label: [*:0]const u8,
+        group: ?*gpu.BindGroup = null,
+        layout: ?*gpu.BindGroupLayout = null,
+        buffers: std.ArrayListUnmanaged(IUniform) = .{},
 
-                try bind_group_entries.append(alloc, buf.bindEntry(@intCast(i)));
+        fn add(self: *@This(), buffer: anytype, alloc: std.mem.Allocator) !void {
+            const itf: IUniform = buffer.interface();
+            try self.buffers.append(alloc, itf);
+        }
+        fn init(self: *@This(), label: [*:0]const u8, device: *gpu.Device, alloc: std.mem.Allocator) !void {
+            var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
+            defer layout_entries.deinit(alloc);
+            var bind_group_entries = std.ArrayListUnmanaged(gpu.BindGroup.Entry){};
+            defer bind_group_entries.deinit(alloc);
+
+            for (self.buffers.items, 0..) |*buf, i| {
+                try layout_entries.append(alloc, buf.bindGroupLayoutEntry(@intCast(i)));
+
+                try bind_group_entries.append(alloc, buf.bindGroupEntry(@intCast(i)));
             }
 
             const bind_group_layout = device.createBindGroupLayout(
@@ -171,12 +178,9 @@ const Renderer = struct {
             }
         }
         fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
-            if (self.layout) |layout| {
-                layout.release();
-            }
-            if (self.group) |group| {
-                group.release();
-            }
+            if (self.layout) |layout| layout.release();
+            if (self.group) |group| group.release();
+
             for (self.buffers.items) |*buf| {
                 buf.deinit(alloc);
             }
