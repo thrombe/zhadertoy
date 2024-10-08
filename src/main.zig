@@ -271,7 +271,8 @@ const Renderer = struct {
             }
 
             fn release(self: *@This()) void {
-                self.bind_group.release();
+                self.bind_group.current.release();
+                self.bind_group.last_frame.release();
                 self.pipeline.release();
             }
         };
@@ -363,11 +364,10 @@ const Renderer = struct {
                 empty_input: *EmptyInput,
             ) !struct { group1: *gpu.BindGroup, group2: *gpu.BindGroup, layout: *gpu.BindGroupLayout } {
                 const alloc = allocator;
-                // TODO: free without crashing
                 var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
-                // defer layout_entries.deinit(alloc);
+                defer layout_entries.deinit(alloc);
                 var bind_group_entries = std.ArrayListUnmanaged(gpu.BindGroup.Entry){};
-                // defer bind_group_entries.deinit(alloc);
+                defer bind_group_entries.deinit(alloc);
 
                 for (binding.buffers.items, 0..) |*buf, i| {
                     try layout_entries.append(alloc, buf.bindGroupLayoutEntry(@intCast(i)));
@@ -436,43 +436,49 @@ const Renderer = struct {
                     }
                 };
 
-                var fnn = Fn{
+                var fnn1 = Fn{
                     .layouts = try layout_entries.clone(allocator),
                     .groups = try bind_group_entries.clone(allocator),
                     .empty = empty_input,
                     .alloc = alloc,
                 };
-                try fnn.add_all(_channels, _inputs, true);
+                defer {
+                    fnn1.layouts.deinit(alloc);
+                    fnn1.groups.deinit(alloc);
+                }
+                try fnn1.add_all(_channels, _inputs, true);
 
                 const bind_group_layout = device.createBindGroupLayout(
                     &gpu.BindGroupLayout.Descriptor.init(.{
                         .label = "bind grpu",
-                        .entries = fnn.layouts.items,
+                        .entries = fnn1.layouts.items,
                     }),
                 );
                 const bind_group1 = device.createBindGroup(
                     &gpu.BindGroup.Descriptor.init(.{
                         .label = "bind grpup adfasf",
                         .layout = bind_group_layout,
-                        .entries = fnn.groups.items,
+                        .entries = fnn1.groups.items,
                     }),
                 );
 
-                // fnn.layouts.deinit(alloc);
-                // fnn.groups.deinit(alloc);
-                fnn = Fn{
-                    .layouts = layout_entries,
-                    .groups = bind_group_entries,
+                var fnn2 = Fn{
+                    .layouts = try layout_entries.clone(alloc),
+                    .groups = try bind_group_entries.clone(alloc),
                     .empty = empty_input,
                     .alloc = alloc,
                 };
-                try fnn.add_all(_channels, _inputs, false);
+                defer {
+                    fnn2.layouts.deinit(alloc);
+                    fnn2.groups.deinit(alloc);
+                }
+                try fnn2.add_all(_channels, _inputs, false);
 
                 const bind_group2 = device.createBindGroup(
                     &gpu.BindGroup.Descriptor.init(.{
                         .label = "bind grpup adff",
                         .layout = bind_group_layout,
-                        .entries = fnn.groups.items,
+                        .entries = fnn2.groups.items,
                     }),
                 );
 
@@ -636,6 +642,11 @@ const Renderer = struct {
             const Tex = struct {
                 texture: *gpu.Texture,
                 view: *gpu.TextureView,
+
+                fn release(self: *@This()) void {
+                    self.view.release();
+                    self.texture.destroy();
+                }
             };
             current: Tex,
             last_frame: Tex,
@@ -671,9 +682,8 @@ const Renderer = struct {
             }
 
             fn release(self: *@This()) void {
-                self.sampler.release();
-                self.view.release();
-                self.texture.release();
+                self.current.release();
+                self.last_frame.release();
             }
         };
         const Channels = struct {
@@ -690,6 +700,7 @@ const Renderer = struct {
                     .bufferD = Channel.init(device, size),
                 };
             }
+
             fn release(self: *@This()) void {
                 self.bufferA.release();
                 self.bufferB.release();
@@ -817,7 +828,12 @@ const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.release();
             if (self.pass.buffer3) |*buf| buf.release();
             if (self.pass.buffer4) |*buf| buf.release();
+
             self.channels.release();
+            self.binding.deinit(allocator);
+
+            // NOTE: not needed. this is deinited in binding
+            // self.uniforms.deinit();
         }
     };
 
@@ -836,6 +852,8 @@ const Renderer = struct {
         self.pipeline.release();
         self.binding.deinit(allocator);
         self.toyman.deinit();
+
+        if (self.pri) |*pri| pri.release();
 
         // buffer's interface is already in self.binding
         // self.buffer.deinit(allocator);

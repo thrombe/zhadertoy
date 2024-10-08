@@ -315,6 +315,10 @@ pub const ActiveToy = struct {
     pub const BufferPass = struct {
         output: Buffer,
         inputs: Inputs,
+
+        fn deinit(self: *@This()) void {
+            self.output.deinit();
+        }
     };
 
     has_common: bool = false,
@@ -329,7 +333,10 @@ pub const ActiveToy = struct {
     } = .{},
 
     pub fn deinit(self: *@This()) void {
-        _ = self;
+        if (self.passes.buffer1) |*buf| buf.deinit();
+        if (self.passes.buffer2) |*buf| buf.deinit();
+        if (self.passes.buffer3) |*buf| buf.deinit();
+        if (self.passes.buffer4) |*buf| buf.deinit();
     }
 };
 
