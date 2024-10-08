@@ -208,8 +208,10 @@ const Renderer = struct {
             const device = core.device;
             const height = core_mod.get(core.main_window, .height).?;
             const width = core_mod.get(core.main_window, .width).?;
+            var time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device);
+            errdefer time.deinit(allocator);
             return .{
-                .time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device),
+                .time = time,
                 .resolution = try Buffer(Vec3).new(@tagName(name) ++ " resolution", Vec3{
                     .x = @floatFromInt(width),
                     .y = @floatFromInt(height),
@@ -252,8 +254,15 @@ const Renderer = struct {
                 // try binding.init(@tagName(name), device, allocator);
 
                 var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
-                const bind = try Pass.create_bind_group(device, binding, channels, &inputs, empty_input);
-                const pipeline = try Pass.create_pipeline(device, &inputs, at.has_common, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .image);
+                errdefer inputs.release();
+                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, empty_input);
+                errdefer {
+                    bind.group1.release();
+                    bind.group2.release();
+                    bind.layout.release();
+                }
+                var pipeline = try Pass.create_pipeline(device, &inputs, at.has_common, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .image);
+                errdefer pipeline.release();
 
                 return .{
                     .inputs = inputs,
@@ -292,6 +301,10 @@ const Renderer = struct {
                         return null;
                     }
                 }
+
+                fn release(self: *@This()) void {
+                    self.sampler.release();
+                }
             };
             const Inputs = struct {
                 input1: ?Input,
@@ -306,6 +319,13 @@ const Renderer = struct {
                         .input3 = Input.init(device, inputs.input3),
                         .input4 = Input.init(device, inputs.input4),
                     };
+                }
+
+                fn release(self: *@This()) void {
+                    if (self.input1) |*inp| inp.release();
+                    if (self.input2) |*inp| inp.release();
+                    if (self.input3) |*inp| inp.release();
+                    if (self.input4) |*inp| inp.release();
                 }
             };
 
@@ -336,13 +356,19 @@ const Renderer = struct {
                 // try binding.init(@tagName(name), device, allocator);
 
                 var inputs = Inputs.init(device, &pass.inputs);
-                const bind = try create_bind_group(device, binding, channels, &inputs, empty_input);
-                const pipeline = try create_pipeline(device, &inputs, at.has_common, bind.layout, .rgba32_float, switch (include) {
+                var bind = try create_bind_group(device, binding, channels, &inputs, empty_input);
+                errdefer {
+                    bind.group1.release();
+                    bind.group2.release();
+                    bind.layout.release();
+                }
+                var pipeline = try create_pipeline(device, &inputs, at.has_common, bind.layout, .rgba32_float, switch (include) {
                     .buffer1 => .buffer1,
                     .buffer2 => .buffer2,
                     .buffer3 => .buffer3,
                     .buffer4 => .buffer4,
                 });
+                errdefer pipeline.release();
 
                 return .{
                     .inputs = inputs,
@@ -724,6 +750,11 @@ const Renderer = struct {
         const EmptyInput = struct {
             tex: Channel.Tex,
             sampler: *gpu.Sampler,
+
+            fn release(self: *@This()) void {
+                self.sampler.release();
+                self.tex.release();
+            }
         };
         pass: struct {
             image: ImagePass,
@@ -751,6 +782,8 @@ const Renderer = struct {
             const uniforms = try ShadertoyUniforms.init(core_mod);
 
             var binding = Binding{ .label = "fajdl;f;jda" };
+            errdefer binding.deinit(allocator);
+            // LEAK: if .add() errors, those uniforms don't get deinited
             try binding.add(uniforms.time, allocator);
             try binding.add(uniforms.resolution, allocator);
             // try binding.init(@tagName(name), device, allocator);
@@ -762,6 +795,7 @@ const Renderer = struct {
                 .height = height,
                 .depth_or_array_layers = 1,
             });
+            errdefer channels.release();
 
             const empty_tex = device.createTexture(&gpu.Texture.Descriptor.init(.{
                 .size = .{
@@ -775,18 +809,24 @@ const Renderer = struct {
                 },
                 .format = .rgba32_float,
             }));
-            var empty_input = .{
+            var empty_input = EmptyInput{
                 .tex = .{
                     .texture = empty_tex,
                     .view = empty_tex.createView(&.{}),
                 },
                 .sampler = device.createSampler(&.{}),
             };
-            const image_pass = try ImagePass.init(renderer_mod, core_mod, &channels, &binding, &empty_input);
-            const pass1 = if (at.passes.buffer1) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
-            const pass2 = if (at.passes.buffer2) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
-            const pass3 = if (at.passes.buffer3) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
-            const pass4 = if (at.passes.buffer4) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
+            errdefer empty_input.release();
+            var image_pass = try ImagePass.init(renderer_mod, core_mod, &channels, &binding, &empty_input);
+            errdefer image_pass.release();
+            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
+            errdefer if (pass1) |*pass| pass.release();
+            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
+            errdefer if (pass2) |*pass| pass.release();
+            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
+            errdefer if (pass3) |*pass| pass.release();
+            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
+            errdefer if (pass4) |*pass| pass.release();
 
             return .{
                 .pass = .{
@@ -828,6 +868,8 @@ const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.release();
             if (self.pass.buffer3) |*buf| buf.release();
             if (self.pass.buffer4) |*buf| buf.release();
+            self.pass.empty_input.tex.release();
+            self.pass.empty_input.sampler.release();
 
             self.channels.release();
             self.binding.deinit(allocator);
