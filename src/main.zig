@@ -929,6 +929,8 @@ const Renderer = struct {
         };
 
         var binding = Binding{ .label = buffer.label };
+        errdefer binding.deinit(allocator);
+        // LEAK: if .add or .init fails, buffer, st_buffers leak
         try binding.add(buffer, allocator);
         try binding.add(st_buffers.time, allocator);
         try binding.add(st_buffers.resolution, allocator);
@@ -960,14 +962,16 @@ const Renderer = struct {
             .bind_group_layouts = &bind_group_layouts,
         }));
         defer pipeline_layout.release();
-        const pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
+        var pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
             .label = binding.label,
             .fragment = &fragment,
             .layout = pipeline_layout,
             .vertex = vertex,
         });
+        errdefer pipeline.release();
 
-        const man = try Shadertoy.ToyMan.init();
+        var man = try Shadertoy.ToyMan.init();
+        errdefer man.deinit();
         self_mod.init(.{
             .timer = try mach.Timer.start(),
             .toyman = man,
@@ -978,6 +982,7 @@ const Renderer = struct {
             .pipeline = pipeline,
             .pri = null,
         });
+        // OOF: any errors after self_mod.init be bad. will probably double free
 
         const self: *Renderer = self_mod.state();
         try self.toyman.load_shadertoy("lX2yDt");
