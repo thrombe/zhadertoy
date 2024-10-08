@@ -239,16 +239,14 @@ const Renderer = struct {
             inputs: Pass.Inputs,
 
             fn init(
-                renderer_mod: *Mod,
+                at: *Shadertoy.ActiveToy,
                 core_mod: *mach.Core.Mod,
                 channels: *Channels,
                 binding: *Binding,
                 empty_input: *EmptyInput,
             ) !@This() {
-                const renderer: *Renderer = renderer_mod.state();
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
-                const at = &renderer.toyman.active_toy;
 
                 // TODO:
                 // try binding.init(@tagName(name), device, allocator);
@@ -339,7 +337,7 @@ const Renderer = struct {
             inputs: Inputs,
 
             fn init(
-                renderer_mod: *Mod,
+                at: *Shadertoy.ActiveToy,
                 core_mod: *mach.Core.Mod,
                 pass: *Shadertoy.ActiveToy.BufferPass,
                 channels: *Channels,
@@ -347,10 +345,8 @@ const Renderer = struct {
                 include: enum { buffer1, buffer2, buffer3, buffer4 },
                 empty_input: *EmptyInput,
             ) !@This() {
-                const renderer: *Renderer = renderer_mod.state();
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
-                const at = &renderer.toyman.active_toy;
 
                 // TODO:
                 // try binding.init(@tagName(name), device, allocator);
@@ -773,11 +769,9 @@ const Renderer = struct {
         binding: Binding,
         uniforms: ShadertoyUniforms,
 
-        fn init(renderer_mod: *Mod, core_mod: *mach.Core.Mod) !@This() {
-            const renderer: *Renderer = renderer_mod.state();
+        fn init(at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod) !@This() {
             const core: *mach.Core = core_mod.state();
             const device: *gpu.Device = core.device;
-            const at = &renderer.toyman.active_toy;
 
             const uniforms = try ShadertoyUniforms.init(core_mod);
 
@@ -817,15 +811,15 @@ const Renderer = struct {
                 .sampler = device.createSampler(&.{}),
             };
             errdefer empty_input.release();
-            var image_pass = try ImagePass.init(renderer_mod, core_mod, &channels, &binding, &empty_input);
+            var image_pass = try ImagePass.init(at, core_mod, &channels, &binding, &empty_input);
             errdefer image_pass.release();
-            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
+            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
             errdefer if (pass1) |*pass| pass.release();
-            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
+            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
             errdefer if (pass2) |*pass| pass.release();
-            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
+            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
             errdefer if (pass3) |*pass| pass.release();
-            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(renderer_mod, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
+            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
             errdefer if (pass4) |*pass| pass.release();
 
             return .{
@@ -972,6 +966,11 @@ const Renderer = struct {
 
         var man = try Shadertoy.ToyMan.init();
         errdefer man.deinit();
+
+        try man.load_shadertoy("lX2yDt");
+        var pri = try PlaygroundRenderInfo.init(&man.active_toy, core_mod);
+        errdefer pri.release();
+
         self_mod.init(.{
             .timer = try mach.Timer.start(),
             .toyman = man,
@@ -980,22 +979,8 @@ const Renderer = struct {
             .buffer = buffer,
             .st_buffers = st_buffers,
             .pipeline = pipeline,
-            .pri = null,
+            .pri = pri,
         });
-        // OOF: any errors after self_mod.init be bad. will probably double free
-
-        const self: *Renderer = self_mod.state();
-        try self.toyman.load_shadertoy("lX2yDt");
-        var pri = try PlaygroundRenderInfo.init(self_mod, core_mod);
-
-        const label = @tagName(name) ++ ".render_frame";
-        const encoder = device.createCommandEncoder(&.{ .label = label });
-        defer encoder.release();
-        const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
-        defer back_buffer_view.release();
-
-        pri.render(encoder, back_buffer_view);
-        self.pri = pri;
     }
 
     fn render_frame(
