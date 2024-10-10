@@ -64,6 +64,158 @@ pub const JsonHelpers = struct {
     }
 };
 
+pub fn Deque(typ: type) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        buffer: []typ,
+        size: usize,
+
+        // fill this index next
+        front: usize, // at
+        back: usize, // one to the right
+
+        pub fn init(alloc: std.mem.Allocator) !@This() {
+            const len = 32;
+            const buffer = try alloc.alloc(typ, len);
+            return .{
+                .allocator = alloc,
+                .buffer = buffer,
+                .front = 0,
+                .back = 0,
+                .size = 0,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.allocator.free(self.buffer);
+        }
+
+        pub fn push_front(self: *@This(), value: typ) !void {
+            if (self.size == self.buffer.len) {
+                try self.resize();
+                return self.push_front(value) catch unreachable;
+            }
+            self.front = (self.front + self.buffer.len - 1) % self.buffer.len;
+            self.buffer[self.front] = value;
+            self.size += 1;
+        }
+
+        pub fn push_back(self: *@This(), value: typ) !void {
+            if (self.size == self.buffer.len) {
+                try self.resize();
+                return self.push_back(value) catch unreachable;
+            }
+            self.buffer[self.back] = value;
+            self.back = (self.back + 1) % self.buffer.len;
+            self.size += 1;
+        }
+
+        pub fn pop_front(self: *@This()) ?typ {
+            if (self.size == 0) {
+                return null;
+            }
+            const value = self.buffer[self.front];
+            self.front = (self.front + 1) % self.buffer.len;
+            self.size -= 1;
+            return value;
+        }
+
+        pub fn pop_back(self: *@This()) ?typ {
+            if (self.size == 0) {
+                return null;
+            }
+            self.back = (self.back + self.buffer.len - 1) % self.buffer.len;
+            const value = self.buffer[self.back];
+            self.size -= 1;
+            return value;
+        }
+
+        pub fn peek_front(self: *@This()) ?*const typ {
+            if (self.size == 0) {
+                return null;
+            }
+            return &self.buffer[self.front];
+        }
+
+        pub fn peek_back(self: *@This()) ?*const typ {
+            if (self.size == 0) {
+                return null;
+            }
+            const back = (self.back + self.buffer.len - 1) % self.buffer.len;
+            return &self.buffer[back];
+        }
+
+        pub fn is_empty(self: *@This()) bool {
+            return self.size == 0;
+        }
+
+        fn resize(self: *@This()) !void {
+            std.debug.assert(self.size == self.buffer.len);
+
+            const size = self.buffer.len * 2;
+            const buffer = try self.allocator.alloc(typ, size);
+            @memcpy(buffer[0 .. self.size - self.front], self.buffer[self.front..]);
+            @memcpy(buffer[self.size - self.front .. self.size], self.buffer[0..self.front]);
+            const new = @This(){
+                .allocator = self.allocator,
+                .buffer = buffer,
+                .front = 0,
+                .back = self.size,
+                .size = self.size,
+            };
+            self.allocator.free(self.buffer);
+            self.* = new;
+        }
+    };
+}
+
+pub fn Channel(typ: type) type {
+    return struct {
+        const Dq = Deque(typ);
+        const Pinned = struct {
+            dq: Dq,
+            lock: std.Thread.Mutex = .{},
+        };
+        pinned: *Pinned,
+
+        pub fn init(alloc: std.mem.Allocator) !@This() {
+            const dq = try Dq.init(alloc);
+            const pinned = try alloc.create(Pinned);
+            pinned.* = .{
+                .dq = dq,
+            };
+            return .{
+                .pinned = pinned,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.pinned.lock.lock();
+            // defer self.pinned.lock.unlock();
+            self.pinned.dq.deinit();
+            self.pinned.dq.allocator.destroy(self.pinned);
+        }
+
+        pub fn send(self: *@This(), val: typ) !void {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            try self.pinned.dq.push_back(val);
+        }
+
+        pub fn try_recv(self: *@This()) ?typ {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.pop_front();
+        }
+
+        pub fn can_recv(self: *@This()) bool {
+            self.pinned.lock.lock();
+            defer self.pinned.lock.unlock();
+            return self.pinned.dq.peek_front() != null;
+        }
+    };
+}
+
 pub const FsFuse = struct {
     // - [emcrisostomo/fswatch](https://github.com/emcrisostomo/fswatch?tab=readme-ov-file#libfswatch)
     // - [libfswatch/c/libfswatch.h Reference](http://emcrisostomo.github.io/fswatch/doc/1.17.1/libfswatch.html/libfswatch_8h.html#ae465ef0618fb1dc6d8b70dee68359ea6)
@@ -71,9 +223,14 @@ pub const FsFuse = struct {
         @cInclude("libfswatch/c/libfswatch.h");
     });
 
+    const Event = union(enum) {
+        All,
+        File: []const u8,
+    };
+    const Chan = Channel(Event);
     const Ctx = struct {
         handle: c.FSW_HANDLE,
-        trigger: Fuse,
+        channel: Chan,
         path: [:0]const u8,
     };
 
@@ -100,16 +257,17 @@ pub const FsFuse = struct {
         _ = c.fsw_stop_monitor(self.ctx.handle);
         _ = c.fsw_destroy_session(self.ctx.handle);
         self.thread.join();
+        self.ctx.channel.deinit();
         allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
     }
 
-    pub fn unfuse(self: *@This()) bool {
-        return self.ctx.trigger.unfuse();
+    pub fn can_recv(self: *@This()) bool {
+        return self.ctx.channel.can_recv();
     }
 
-    pub fn check(self: *@This()) bool {
-        return self.ctx.trigger.check();
+    pub fn try_recv(self: *@This()) ?Event {
+        return self.ctx.channel.try_recv();
     }
 
     pub fn restart(self: *@This(), path: [:0]const u8) !void {
@@ -125,7 +283,7 @@ pub const FsFuse = struct {
 
         const ctxt = try allocator.create(Ctx);
         ctxt.* = .{
-            .trigger = .{},
+            .channel = try Chan.init(allocator),
             .handle = null,
             .path = path,
         };
@@ -168,7 +326,6 @@ pub const FsFuse = struct {
                 // flags |= c.MovedFrom;
                 // flags |= c.MovedTo;
 
-                var valid = false;
                 for (events[0..@intCast(num)]) |event| {
                     for (event.flags[0..event.flags_num]) |f| {
                         if (flags & @as(c_int, @intCast(f)) == 0) {
@@ -177,12 +334,14 @@ pub const FsFuse = struct {
                         const name = c.fsw_get_event_flag_name(f);
                         std.debug.print("Path: {s}\n", .{event.path});
                         std.debug.print("Event Type: {s}\n", .{std.mem.span(name)});
-                        valid = true;
-                    }
-                }
 
-                if (valid) {
-                    ctx.?.trigger.fuse();
+                        if (ctx) |cctx| {
+                            const stripped = std.fs.path.relative(allocator, cctx.path, std.mem.span(event.path)) catch unreachable;
+                            cctx.channel.send(.{ .File = stripped }) catch unreachable;
+                        } else {
+                            std.debug.print("Error: Event ignored!", .{});
+                        }
+                    }
                 }
             }
         };

@@ -72,7 +72,7 @@ pub const ToyMan = struct {
 
         const fuse = try FsFuse.init(config.paths.playground);
         // TODO: fuse() + default self.active_toy won't work cuz of things like has_common
-        fuse.ctx.trigger.fuse();
+        try fuse.ctx.channel.send(.All);
         const cache = try Cached.init(config.paths.shadertoys);
 
         return .{
@@ -104,7 +104,7 @@ pub const ToyMan = struct {
         self.active_toy = active;
 
         try self.shader_fuse.restart(config.paths.playground);
-        self.shader_fuse.ctx.trigger.fuse();
+        try self.shader_fuse.ctx.channel.send(.All);
     }
 
     pub fn load_zhadertoy(self: *@This(), id: []const u8) !void {
@@ -123,7 +123,7 @@ pub const ToyMan = struct {
         self.active_toy = active;
 
         try self.shader_fuse.restart(config.paths.playground);
-        self.shader_fuse.ctx.trigger.fuse();
+        try self.shader_fuse.ctx.channel.send(.All);
     }
 
     // file naming:

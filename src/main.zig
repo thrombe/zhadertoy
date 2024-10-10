@@ -348,9 +348,6 @@ const Renderer = struct {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
-                // TODO:
-                // try binding.init(@tagName(name), device, allocator);
-
                 var inputs = Inputs.init(device, &pass.inputs);
                 var bind = try create_bind_group(device, binding, channels, &inputs, empty_input);
                 errdefer {
@@ -780,6 +777,7 @@ const Renderer = struct {
             // LEAK: if .add() errors, those uniforms don't get deinited
             try binding.add(uniforms.time, allocator);
             try binding.add(uniforms.resolution, allocator);
+            // TODO:
             // try binding.init(@tagName(name), device, allocator);
 
             const height = core_mod.get(core.main_window, .height).?;
@@ -1046,10 +1044,19 @@ const Renderer = struct {
         const device = core.device;
         const self: *@This() = self_mod.state();
 
-        std.debug.print("updating shaders!\n", .{});
+        while (self.toyman.shader_fuse.try_recv()) |ev| {
+            switch (ev) {
+                .All => {},
+                .File => |path| {
+                    std.debug.print("update: {s}\n", .{path});
+                    allocator.free(path);
+                },
+            }
+        }
         if (true) {
             return;
         }
+        std.debug.print("updating shaders!\n", .{});
 
         var definitions = std.ArrayList([]const u8).init(allocator);
         defer {
@@ -1146,7 +1153,7 @@ const Renderer = struct {
         defer self_mod.schedule(.render_frame);
 
         const self: *@This() = self_mod.state();
-        if (self.toyman.shader_fuse.unfuse()) {
+        if (self.toyman.shader_fuse.can_recv()) {
             self_mod.schedule(.update_shaders);
         }
 
