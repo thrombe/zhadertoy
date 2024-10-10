@@ -873,99 +873,23 @@ const Renderer = struct {
 
     timer: mach.Timer,
     toyman: Shadertoy.ToyMan,
-
-    pipeline: *gpu.RenderPipeline,
-    binding: Binding,
-    buffer: *Buffer(StateUniform),
-    st_buffers: ShadertoyUniforms,
-
-    pri: ?PlaygroundRenderInfo,
+    pri: PlaygroundRenderInfo,
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
-        self.pipeline.release();
-        self.binding.deinit(allocator);
         self.toyman.deinit();
-
-        if (self.pri) |*pri| pri.release();
-
-        // buffer's interface is already in self.binding
-        // self.buffer.deinit(allocator);
-        // self.st_buffers.time.deinit(allocator);
-        // self.st_buffers.resolution.deinit(allocator);
+        self.pri.release();
     }
 
     fn init(
         core_mod: *mach.Core.Mod,
         self_mod: *Mod,
     ) !void {
-        const core: *mach.Core = core_mod.state();
-        const device = core.device;
-
-        const height = core_mod.get(core.main_window, .height).?;
-        const width = core_mod.get(core.main_window, .width).?;
-        const state = .{
-            .render_width = width,
-            .render_height = height,
-            .display_width = height,
-            .display_height = width,
-        };
-        const buffer = try Buffer(StateUniform).new(@tagName(name) ++ "custom state", state, allocator, device);
-        const st_buffers = ShadertoyUniforms{
-            .time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device),
-            .resolution = try Buffer(Vec3).new(@tagName(name) ++ " resolution", Vec3{
-                .x = @floatFromInt(width),
-                .y = @floatFromInt(height),
-                .z = 0.0,
-            }, allocator, device),
-        };
-
-        var binding = Binding{ .label = buffer.label };
-        errdefer binding.deinit(allocator);
-        // LEAK: if .add or .init fails, buffer, st_buffers leak
-        try binding.add(buffer, allocator);
-        try binding.add(st_buffers.time, allocator);
-        try binding.add(st_buffers.resolution, allocator);
-        try binding.init(@tagName(name), device, allocator);
-
-        const shader_module = device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
-        defer shader_module.release();
-        const frag_shader_module = shader_module;
-        const vertex_shader_module = shader_module;
-
-        const color_target = gpu.ColorTargetState{
-            .format = core_mod.get(core.main_window, .framebuffer_format).?,
-            .blend = &gpu.BlendState{},
-            .write_mask = gpu.ColorWriteMaskFlags.all,
-        };
-        const fragment = gpu.FragmentState.init(.{
-            .module = frag_shader_module,
-            .entry_point = "frag_main",
-            .targets = &.{color_target},
-        });
-        const vertex = gpu.VertexState{
-            .module = vertex_shader_module,
-            .entry_point = "vert_main",
-        };
-
-        const bind_group_layouts = [_]*gpu.BindGroupLayout{binding.layout.?};
-        const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
-            .label = binding.label,
-            .bind_group_layouts = &bind_group_layouts,
-        }));
-        defer pipeline_layout.release();
-        var pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
-            .label = binding.label,
-            .fragment = &fragment,
-            .layout = pipeline_layout,
-            .vertex = vertex,
-        });
-        errdefer pipeline.release();
-
         var man = try Shadertoy.ToyMan.init();
         errdefer man.deinit();
 
-        try man.load_shadertoy("lX2yDt");
+        // TODO: this initialzation should be all from @embed() shaders
+        try man.load_zhadertoy("new");
         var pri = try PlaygroundRenderInfo.init(&man.active_toy, core_mod);
         errdefer pri.release();
 
@@ -973,10 +897,6 @@ const Renderer = struct {
             .timer = try mach.Timer.start(),
             .toyman = man,
 
-            .binding = binding,
-            .buffer = buffer,
-            .st_buffers = st_buffers,
-            .pipeline = pipeline,
             .pri = pri,
         });
     }
@@ -993,41 +913,13 @@ const Renderer = struct {
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
-        self.binding.update(encoder);
+        // TODO: more updates left
+        self.pri.binding.update(encoder);
 
         const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
         defer back_buffer_view.release();
-        if (true) {
-            self.pri.?.render(encoder, back_buffer_view);
-            var command = encoder.finish(&.{ .label = label });
-            defer command.release();
-            core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
-            core_mod.schedule(.present_frame);
-            return;
-        }
-
-        const color_attachments = [_]gpu.RenderPassColorAttachment{.{
-            .view = back_buffer_view,
-            .clear_value = gpu.Color{
-                .r = 40.0 / 255.0,
-                .g = 40.0 / 255.0,
-                .b = 40.0 / 255.0,
-                .a = 1,
-            },
-            .load_op = .clear,
-            .store_op = .store,
-        }};
-        const render_pass = encoder.beginRenderPass(&gpu.RenderPassDescriptor.init(.{
-            .label = label,
-            .color_attachments = &color_attachments,
-        }));
-        defer render_pass.release();
-
-        render_pass.setPipeline(self.pipeline);
-        render_pass.setBindGroup(0, self.binding.group.?, &.{ 0, 0, 0 });
-        render_pass.draw(6, 1, 0, 0);
-        render_pass.end();
+        self.pri.render(encoder, back_buffer_view);
 
         var command = encoder.finish(&.{ .label = label });
         defer command.release();
@@ -1040,107 +932,12 @@ const Renderer = struct {
         core_mod: *mach.Core.Mod,
         self_mod: *Mod,
     ) !void {
-        const core: *mach.Core = core_mod.state();
-        const device = core.device;
         const self: *@This() = self_mod.state();
+        _ = core_mod;
 
         while (self.toyman.try_get_update()) |ev| {
             std.debug.print("update: {any}\n", .{ev});
         }
-        if (true) {
-            return;
-        }
-        std.debug.print("updating shaders!\n", .{});
-
-        var definitions = std.ArrayList([]const u8).init(allocator);
-        defer {
-            for (definitions.items) |def| {
-                allocator.free(def);
-            }
-            definitions.deinit();
-        }
-        if (self.toyman.active_toy.has_common) {
-            try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
-        }
-
-        var compiler = Glslc.Compiler{ .opt = .fast };
-        compiler.stage = .vertex;
-        // _ = compiler.dump_assembly(allocator, vert);
-        const vertex_bytes = compiler.compile(
-            allocator,
-            &.{ .path = .{
-                .main = "./shaders/vert.glsl",
-                .include = &[_][]const u8{config.paths.playground},
-                .definitions = definitions.items,
-            } },
-            .spirv,
-        ) catch |e| {
-            std.debug.print("{any}\n", .{e});
-            return;
-        };
-        defer allocator.free(vertex_bytes);
-        const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
-            .next_in_chain = .{ .spirv_descriptor = &.{
-                .code_size = @intCast(vertex_bytes.len),
-                .code = vertex_bytes.ptr,
-            } },
-            .label = "vert.glsl",
-        });
-        defer vertex_shader_module.release();
-
-        compiler.stage = .fragment;
-        // _ = compiler.dump_assembly(allocator, frag);
-        const frag_bytes = compiler.compile(
-            allocator,
-            &.{ .path = .{
-                .main = "./shaders/frag.glsl",
-                .include = &[_][]const u8{config.paths.playground},
-                .definitions = definitions.items,
-            } },
-            .spirv,
-        ) catch |e| {
-            std.debug.print("{any}\n", .{e});
-            return;
-        };
-        defer allocator.free(frag_bytes);
-        const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
-            .next_in_chain = .{ .spirv_descriptor = &.{
-                .code_size = @intCast(frag_bytes.len),
-                .code = frag_bytes.ptr,
-            } },
-            .label = "frag.glsl",
-        });
-        defer frag_shader_module.release();
-
-        const color_target = gpu.ColorTargetState{
-            .format = core_mod.get(core.main_window, .framebuffer_format).?,
-            .blend = &gpu.BlendState{},
-            .write_mask = gpu.ColorWriteMaskFlags.all,
-        };
-        const fragment = gpu.FragmentState.init(.{
-            .module = frag_shader_module,
-            .entry_point = "main",
-            .targets = &.{color_target},
-        });
-        const vertex = gpu.VertexState{
-            .module = vertex_shader_module,
-            .entry_point = "main",
-        };
-
-        const bind_group_layouts = [_]*gpu.BindGroupLayout{self.binding.layout.?};
-        const pipeline_layout = device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
-            .label = self.binding.label,
-            .bind_group_layouts = &bind_group_layouts,
-        }));
-        defer pipeline_layout.release();
-        const pipeline = device.createRenderPipeline(&gpu.RenderPipeline.Descriptor{
-            .label = self.binding.label,
-            .fragment = &fragment,
-            .layout = pipeline_layout,
-            .vertex = vertex,
-        });
-        self.pipeline.release();
-        self.pipeline = pipeline;
     }
 
     fn tick(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
@@ -1151,27 +948,28 @@ const Renderer = struct {
             self_mod.schedule(.update_shaders);
         }
 
-        var state = &self.buffer.val;
-        state.time += self.timer.lap();
-        self.st_buffers.time.val = state.time;
+        var state = &self.pri.uniforms;
+        state.time.val += self.timer.lap();
 
+        // TODO: shadertoy uniforms
         var iter = mach.core.pollEvents();
         while (iter.next()) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
-                    state.cursor_x = @floatCast(pos.pos.x);
-                    state.cursor_y = @floatCast(pos.pos.y);
+                    _ = pos;
+                    // state.cursor_x = @floatCast(pos.pos.x);
+                    // state.cursor_y = @floatCast(pos.pos.y);
                 },
                 .mouse_press => |button| {
                     switch (button.button) {
                         .left => {
-                            state.mouse_left = 1;
+                            // state.mouse_left = 1;
                         },
                         .right => {
-                            state.mouse_right = 1;
+                            // state.mouse_right = 1;
                         },
                         .middle => {
-                            state.mouse_middle = 1;
+                            // state.mouse_middle = 1;
                         },
                         else => {},
                     }
@@ -1179,19 +977,20 @@ const Renderer = struct {
                 .mouse_release => |button| {
                     switch (button.button) {
                         .left => {
-                            state.mouse_left = 0;
+                            // state.mouse_left = 0;
                         },
                         .right => {
-                            state.mouse_right = 0;
+                            // state.mouse_right = 0;
                         },
                         .middle => {
-                            state.mouse_middle = 0;
+                            // state.mouse_middle = 0;
                         },
                         else => {},
                     }
                 },
                 .mouse_scroll => |del| {
-                    state.scroll += del.yoffset;
+                    _ = del;
+                    // state.scroll += del.yoffset;
                 },
                 .key_press => |ev| {
                     switch (ev.key) {
@@ -1202,7 +1001,8 @@ const Renderer = struct {
                             try self.toyman.load_shadertoy("4td3zj");
                         },
                         .two => {
-                            try self.toyman.load_shadertoy("4t3SzN");
+                            // try self.toyman.load_shadertoy("lXjyWt");
+                            try self.toyman.load_shadertoy("lX2yDt");
                         },
                         .zero => {
                             try self.toyman.load_zhadertoy("new");
@@ -1216,10 +1016,11 @@ const Renderer = struct {
                     }
                 },
                 .framebuffer_resize => |sze| {
-                    state.render_height = sze.height;
-                    state.render_width = sze.width;
-                    state.display_height = sze.height;
-                    state.display_width = sze.width;
+                    _ = sze;
+                    // state.render_height = sze.height;
+                    // state.render_width = sze.width;
+                    // state.display_height = sze.height;
+                    // state.display_width = sze.width;
                 },
                 .close => core_mod.schedule(.exit),
                 else => {},
