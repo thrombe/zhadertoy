@@ -5,6 +5,9 @@ const Glslc = compile.Glslc;
 
 const Shadertoy = @import("shadertoy.zig");
 
+const utils = @import("utils.zig");
+const Fuse = utils.Fuse;
+
 const mach = @import("mach");
 
 // using wgpu instead of mach.gpu for better lsp results
@@ -869,8 +872,10 @@ const Renderer = struct {
                     pass.release();
                 },
                 .All => {
-                    self.release();
-                    self.* = try @This().init(at, core_mod);
+                    var old_self = self.*;
+                    const new_self = try @This().init(at, core_mod);
+                    self.* = new_self;
+                    old_self.release();
                 },
             }
         }
@@ -911,14 +916,46 @@ const Renderer = struct {
         }
     };
 
+    // gpu has an async api
+    // errors callback is called asynchronously. i need a way to to know what shaders and pipelines are good
+    // and i don't know of a nice way to do this - so i just say if the gpu does not produce errors for 10
+    // frames then the shaders and pipelines are probably good.
+    // TODO: could add another fuse to track when to back up current pipelines and bind groups
+    //       so that they could be used when new pipelines give errors
+    //       (self.err_fuse tracks if error message is printed or not (dumping too many errors is not good))
+    const GpuFuse = struct {
+        const tick_threshold = 10;
+        ticks: std.atomic.Value(u32),
+        err_fuse: Fuse,
+
+        fn tick(self: *@This()) void {
+            _ = self.ticks.fetchAdd(1, .acq_rel);
+            const ticks = self.ticks.fetchMin(tick_threshold, .acq_rel);
+            if (ticks >= tick_threshold) {
+                _ = self.err_fuse.unfuse();
+            }
+        }
+
+        fn fuse(self: *@This()) bool {
+            self.ticks.store(0, .release);
+            return self.err_fuse.fuse();
+        }
+
+        fn check(self: *@This()) bool {
+            return self.err_fuse.check();
+        }
+    };
+
     timer: mach.Timer,
     toyman: Shadertoy.ToyMan,
     pri: PlaygroundRenderInfo,
+    gpu_err_fuse: *GpuFuse,
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
         self.toyman.deinit();
         self.pri.release();
+        allocator.destroy(self.gpu_err_fuse);
     }
 
     fn init(
@@ -933,11 +970,37 @@ const Renderer = struct {
         var pri = try PlaygroundRenderInfo.init(&man.active_toy, core_mod);
         errdefer pri.release();
 
+        const core: *mach.Core = core_mod.state();
+        const device = core.device;
+
+        const err_fuse = try allocator.create(GpuFuse);
+
+        // - [machengine.org/content/engine/gpu/errors.md](https://github.com/hexops/machengine.org/blob/e10e4245c4c1de7fe9e4882e378a86d42eb1035a/content/engine/gpu/errors.md)
+        device.setUncapturedErrorCallback(err_fuse, struct {
+            inline fn callback(ctx: *GpuFuse, typ: gpu.ErrorType, message: [*:0]const u8) void {
+                switch (typ) {
+                    .no_error => return,
+                    .validation => {},
+                    else => |err| {
+                        std.debug.print("Unhandled Gpu Error: {any}\n", .{err});
+                        std.debug.print("Error Message: {s}\n", .{message});
+                        std.process.exit(1);
+                        return;
+                    },
+                }
+
+                if (!ctx.fuse()) {
+                    std.debug.print("Gpu Validation Error: {s}\n", .{message});
+                }
+            }
+        }.callback);
+
         self_mod.init(.{
             .timer = try mach.Timer.start(),
             .toyman = man,
 
             .pri = pri,
+            .gpu_err_fuse = err_fuse,
         });
     }
 
@@ -966,6 +1029,8 @@ const Renderer = struct {
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
+        self.gpu_err_fuse.tick();
+
         core_mod.schedule(.present_frame);
     }
 
@@ -976,6 +1041,8 @@ const Renderer = struct {
         const self: *@This() = self_mod.state();
 
         while (self.toyman.try_get_update()) |ev| {
+            std.debug.print("updating shader: {any}\n", .{ev});
+
             self.pri.update(&self.toyman.active_toy, core_mod, ev) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };

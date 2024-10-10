@@ -357,8 +357,8 @@ pub const FsFuse = struct {
 pub const Fuse = struct {
     fused: std.atomic.Value(bool) = .{ .raw = false },
 
-    pub fn fuse(self: *@This()) void {
-        self.fused.store(true, .release);
+    pub fn fuse(self: *@This()) bool {
+        return self.fused.swap(true, .release);
     }
     pub fn unfuse(self: *@This()) bool {
         const res = self.fused.swap(false, .release);
