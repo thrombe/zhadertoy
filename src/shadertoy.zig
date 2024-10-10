@@ -67,6 +67,7 @@ pub const ToyMan = struct {
         Buffer2,
         Buffer3,
         Buffer4,
+        Image,
         All,
     };
 
@@ -122,6 +123,9 @@ pub const ToyMan = struct {
                     if (std.mem.eql(u8, path, "buffer4.glsl")) {
                         return .Buffer4;
                     }
+                    if (std.mem.eql(u8, path, "image.glsl")) {
+                        return .Image;
+                    }
                     if (std.mem.eql(u8, path, "common.glsl")) {
                         return .All;
                     }
@@ -134,7 +138,7 @@ pub const ToyMan = struct {
                     if (std.mem.eql(u8, path, "vert.glsl")) {
                         return .All;
                     }
-                    return null;
+                    std.debug.print("Unknown file update: {s}\n", .{path});
                 },
             }
         }
