@@ -248,9 +248,6 @@ const Renderer = struct {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
-                // TODO:
-                // try binding.init(@tagName(name), device, allocator);
-
                 var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
                 errdefer inputs.release();
                 var bind = try Pass.create_bind_group(device, binding, channels, &inputs, empty_input);
@@ -697,7 +694,7 @@ const Renderer = struct {
             }
 
             fn swap(self: *@This()) void {
-                std.mem.swap(*Tex, &self.current, &self.last_frame);
+                std.mem.swap(Tex, &self.current, &self.last_frame);
             }
 
             fn release(self: *@This()) void {
@@ -835,6 +832,49 @@ const Renderer = struct {
             };
         }
 
+        fn update(self: *@This(), at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod, ev: Shadertoy.ToyMan.UpdateEvent) !void {
+            switch (ev) {
+                .Buffer1 => {
+                    var buf1 = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
+                    var pass = self.pass.buffer1.?;
+                    const new_pass = try Pass.init(at, core_mod, &buf1, &self.channels, &self.binding, .buffer1, &self.pass.empty_input);
+                    self.pass.buffer1 = new_pass;
+                    pass.release();
+                },
+                .Buffer2 => {
+                    var buf2 = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
+                    var pass = self.pass.buffer2.?;
+                    const new_pass = try Pass.init(at, core_mod, &buf2, &self.channels, &self.binding, .buffer2, &self.pass.empty_input);
+                    self.pass.buffer2 = new_pass;
+                    pass.release();
+                },
+                .Buffer3 => {
+                    var buf3 = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
+                    var pass = self.pass.buffer3.?;
+                    const new_pass = try Pass.init(at, core_mod, &buf3, &self.channels, &self.binding, .buffer3, &self.pass.empty_input);
+                    self.pass.buffer3 = new_pass;
+                    pass.release();
+                },
+                .Buffer4 => {
+                    var buf4 = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
+                    var pass = self.pass.buffer4.?;
+                    const new_pass = try Pass.init(at, core_mod, &buf4, &self.channels, &self.binding, .buffer4, &self.pass.empty_input);
+                    self.pass.buffer4 = new_pass;
+                    pass.release();
+                },
+                .Image => {
+                    var pass = self.pass.image;
+                    const new_pass = try ImagePass.init(at, core_mod, &self.channels, &self.binding, &self.pass.empty_input);
+                    self.pass.image = new_pass;
+                    pass.release();
+                },
+                .All => {
+                    self.release();
+                    self.* = try @This().init(at, core_mod);
+                },
+            }
+        }
+
         fn swap(self: *@This()) void {
             self.channels.bufferA.swap();
             self.channels.bufferB.swap();
@@ -919,6 +959,7 @@ const Renderer = struct {
         const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
         defer back_buffer_view.release();
 
+        self.pri.swap();
         self.pri.render(encoder, back_buffer_view);
 
         var command = encoder.finish(&.{ .label = label });
@@ -933,10 +974,11 @@ const Renderer = struct {
         self_mod: *Mod,
     ) !void {
         const self: *@This() = self_mod.state();
-        _ = core_mod;
 
         while (self.toyman.try_get_update()) |ev| {
-            std.debug.print("update: {any}\n", .{ev});
+            self.pri.update(&self.toyman.active_toy, core_mod, ev) catch |e| {
+                std.debug.print("Error while updating shaders: {any}\n", .{e});
+            };
         }
     }
 

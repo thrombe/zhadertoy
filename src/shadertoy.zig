@@ -62,7 +62,7 @@ pub const ToyMan = struct {
     shader_cache: Cached,
     active_toy: ActiveToy,
 
-    const UpdateEvent = enum {
+    pub const UpdateEvent = enum {
         Buffer1,
         Buffer2,
         Buffer3,
