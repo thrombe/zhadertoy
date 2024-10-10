@@ -1044,14 +1044,8 @@ const Renderer = struct {
         const device = core.device;
         const self: *@This() = self_mod.state();
 
-        while (self.toyman.shader_fuse.try_recv()) |ev| {
-            switch (ev) {
-                .All => {},
-                .File => |path| {
-                    std.debug.print("update: {s}\n", .{path});
-                    allocator.free(path);
-                },
-            }
+        while (self.toyman.try_get_update()) |ev| {
+            std.debug.print("update: {any}\n", .{ev});
         }
         if (true) {
             return;
@@ -1153,7 +1147,7 @@ const Renderer = struct {
         defer self_mod.schedule(.render_frame);
 
         const self: *@This() = self_mod.state();
-        if (self.toyman.shader_fuse.can_recv()) {
+        if (self.toyman.has_updates()) {
             self_mod.schedule(.update_shaders);
         }
 

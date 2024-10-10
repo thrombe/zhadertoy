@@ -62,6 +62,14 @@ pub const ToyMan = struct {
     shader_cache: Cached,
     active_toy: ActiveToy,
 
+    const UpdateEvent = enum {
+        Buffer1,
+        Buffer2,
+        Buffer3,
+        Buffer4,
+        All,
+    };
+
     const vert_glsl = @embedFile("./vert.glsl");
     const frag_glsl = @embedFile("./frag.glsl");
 
@@ -88,6 +96,49 @@ pub const ToyMan = struct {
         self.shader_cache.deinit();
         self.active_toy.deinit();
         allocator.free(self.playground);
+    }
+
+    pub fn has_updates(self: *@This()) bool {
+        return self.shader_fuse.can_recv();
+    }
+
+    pub fn try_get_update(self: *@This()) ?UpdateEvent {
+        while (self.shader_fuse.try_recv()) |ev| {
+            switch (ev) {
+                .All => {
+                    return .All;
+                },
+                .File => |path| {
+                    defer allocator.free(path);
+                    if (std.mem.eql(u8, path, "buffer1.glsl")) {
+                        return .Buffer1;
+                    }
+                    if (std.mem.eql(u8, path, "buffer2.glsl")) {
+                        return .Buffer2;
+                    }
+                    if (std.mem.eql(u8, path, "buffer3.glsl")) {
+                        return .Buffer3;
+                    }
+                    if (std.mem.eql(u8, path, "buffer4.glsl")) {
+                        return .Buffer4;
+                    }
+                    if (std.mem.eql(u8, path, "common.glsl")) {
+                        return .All;
+                    }
+                    if (std.mem.eql(u8, path, "toy.json")) {
+                        return .All;
+                    }
+                    if (std.mem.eql(u8, path, "frag.glsl")) {
+                        return .All;
+                    }
+                    if (std.mem.eql(u8, path, "vert.glsl")) {
+                        return .All;
+                    }
+                    return null;
+                },
+            }
+        }
+        return null;
     }
 
     pub fn load_shadertoy(self: *@This(), id: []const u8) !void {
