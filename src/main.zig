@@ -253,7 +253,7 @@ const Renderer = struct {
 
                 var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
                 errdefer inputs.release();
-                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, empty_input);
+                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, &at.passes.image.inputs, empty_input);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
@@ -349,7 +349,7 @@ const Renderer = struct {
                 const device = core.device;
 
                 var inputs = Inputs.init(device, &pass.inputs);
-                var bind = try create_bind_group(device, binding, channels, &inputs, empty_input);
+                var bind = try create_bind_group(device, binding, channels, &inputs, &pass.inputs, empty_input);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
@@ -380,6 +380,7 @@ const Renderer = struct {
                 binding: *Binding,
                 _channels: *Channels,
                 _inputs: *Inputs,
+                _at_inputs: *Shadertoy.ActiveToy.Inputs,
                 empty_input: *EmptyInput,
             ) !struct { group1: *gpu.BindGroup, group2: *gpu.BindGroup, layout: *gpu.BindGroupLayout } {
                 const alloc = allocator;
@@ -423,31 +424,51 @@ const Renderer = struct {
                         try self.groups.append(self.alloc, gpu.BindGroup.Entry.sampler(@intCast(self.groups.items.len), sampler));
                     }
 
-                    fn add_all(self: *@This(), channels: *Channels, inputs: *Inputs, current: bool) !void {
+                    fn add_all(self: *@This(), channels: *Channels, inputs: *Inputs, at_inputs: *Shadertoy.ActiveToy.Inputs, swap_tex: bool) !void {
                         if (inputs.input1) |inp| {
                             const tex = channels.get(inp.typ);
-                            const view = if (current) tex.current.view else tex.last_frame.view;
+                            var curr: *gpu.TextureView = tex.current.view;
+                            var last: *gpu.TextureView = tex.last_frame.view;
+                            if (swap_tex) {
+                                std.mem.swap(*gpu.TextureView, &curr, &last);
+                            }
+                            const view = if (at_inputs.input1.?.from_current_frame) curr else last;
                             try self.add(view, inp.sampler);
                         } else {
                             try self.add(self.empty.tex.view, self.empty.sampler);
                         }
                         if (inputs.input2) |inp| {
                             const tex = channels.get(inp.typ);
-                            const view = if (current) tex.current.view else tex.last_frame.view;
+                            var curr: *gpu.TextureView = tex.current.view;
+                            var last: *gpu.TextureView = tex.last_frame.view;
+                            if (swap_tex) {
+                                std.mem.swap(*gpu.TextureView, &curr, &last);
+                            }
+                            const view = if (at_inputs.input2.?.from_current_frame) curr else last;
                             try self.add(view, inp.sampler);
                         } else {
                             try self.add(self.empty.tex.view, self.empty.sampler);
                         }
                         if (inputs.input3) |inp| {
                             const tex = channels.get(inp.typ);
-                            const view = if (current) tex.current.view else tex.last_frame.view;
+                            var curr: *gpu.TextureView = tex.current.view;
+                            var last: *gpu.TextureView = tex.last_frame.view;
+                            if (swap_tex) {
+                                std.mem.swap(*gpu.TextureView, &curr, &last);
+                            }
+                            const view = if (at_inputs.input3.?.from_current_frame) curr else last;
                             try self.add(view, inp.sampler);
                         } else {
                             try self.add(self.empty.tex.view, self.empty.sampler);
                         }
                         if (inputs.input4) |inp| {
                             const tex = channels.get(inp.typ);
-                            const view = if (current) tex.current.view else tex.last_frame.view;
+                            var curr: *gpu.TextureView = tex.current.view;
+                            var last: *gpu.TextureView = tex.last_frame.view;
+                            if (swap_tex) {
+                                std.mem.swap(*gpu.TextureView, &curr, &last);
+                            }
+                            const view = if (at_inputs.input4.?.from_current_frame) curr else last;
                             try self.add(view, inp.sampler);
                         } else {
                             try self.add(self.empty.tex.view, self.empty.sampler);
@@ -465,7 +486,7 @@ const Renderer = struct {
                     fnn1.layouts.deinit(alloc);
                     fnn1.groups.deinit(alloc);
                 }
-                try fnn1.add_all(_channels, _inputs, true);
+                try fnn1.add_all(_channels, _inputs, _at_inputs, false);
 
                 const bind_group_layout = device.createBindGroupLayout(
                     &gpu.BindGroupLayout.Descriptor.init(.{
@@ -491,7 +512,7 @@ const Renderer = struct {
                     fnn2.layouts.deinit(alloc);
                     fnn2.groups.deinit(alloc);
                 }
-                try fnn2.add_all(_channels, _inputs, false);
+                try fnn2.add_all(_channels, _inputs, _at_inputs, true);
 
                 const bind_group2 = device.createBindGroup(
                     &gpu.BindGroup.Descriptor.init(.{

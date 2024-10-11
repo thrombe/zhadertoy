@@ -299,6 +299,7 @@ pub const ToyMan = struct {
             .{ .is_directory = true },
         );
 
+        t.mark_current_frame_inputs();
         return t;
     }
 };
@@ -326,6 +327,13 @@ pub const ActiveToy = struct {
     pub const Input = struct {
         typ: Buf,
         sampler: Sampler,
+        from_current_frame: bool = false,
+
+        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
+            if (self.typ == typ) {
+                self.from_current_frame = true;
+            }
+        }
     };
     pub const Inputs = struct {
         input1: ?Input = null,
@@ -366,6 +374,28 @@ pub const ActiveToy = struct {
             }
             return self;
         }
+
+        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
+            if (self.input1) |*inp| inp.mark_current_frame_input(typ);
+            if (self.input2) |*inp| inp.mark_current_frame_input(typ);
+            if (self.input3) |*inp| inp.mark_current_frame_input(typ);
+            if (self.input4) |*inp| inp.mark_current_frame_input(typ);
+        }
+
+        fn mark_current_frame_inputs(self: *@This(), inputs: *@This()) void {
+            if (inputs.input1) |inp| {
+                self.mark_current_frame_input(inp.typ);
+            }
+            if (inputs.input2) |inp| {
+                self.mark_current_frame_input(inp.typ);
+            }
+            if (inputs.input3) |inp| {
+                self.mark_current_frame_input(inp.typ);
+            }
+            if (inputs.input4) |inp| {
+                self.mark_current_frame_input(inp.typ);
+            }
+        }
     };
     pub const BufferPass = struct {
         output: Buffer,
@@ -386,6 +416,42 @@ pub const ActiveToy = struct {
         buffer3: ?BufferPass = null,
         buffer4: ?BufferPass = null,
     } = .{},
+
+    // any pass can take input of any buffer.
+    // any buffers output from 1 pass go into the next passes
+    // buffer passes can take input of the same buffer from last frames output
+    fn mark_current_frame_inputs(self: *@This()) void {
+        if (self.passes.buffer1) |*buf| {
+            if (self.passes.buffer2) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            if (self.passes.buffer3) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            if (self.passes.buffer4) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+        }
+        if (self.passes.buffer2) |*buf| {
+            if (self.passes.buffer3) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            if (self.passes.buffer4) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+        }
+        if (self.passes.buffer3) |*buf| {
+            if (self.passes.buffer4) |*buf1| {
+                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+            }
+            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+        }
+        if (self.passes.buffer4) |*buf| {
+            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+        }
+    }
 
     pub fn deinit(self: *@This()) void {
         if (self.passes.buffer1) |*buf| buf.deinit();
