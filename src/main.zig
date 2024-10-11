@@ -1135,6 +1135,9 @@ const Renderer = struct {
                             // try self.toyman.load_shadertoy("lXjyWt");
                             try self.toyman.load_shadertoy("lX2yDt");
                         },
+                        .three => {
+                            try self.toyman.load_shadertoy("NslGRN");
+                        },
                         .zero => {
                             try self.toyman.load_zhadertoy("new");
                         },
