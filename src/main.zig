@@ -1067,6 +1067,7 @@ const Renderer = struct {
             self.pri.update(&self.toyman.active_toy, core_mod, ev) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
+            _ = self.gpu_err_fuse.err_fuse.unfuse();
         }
     }
 
