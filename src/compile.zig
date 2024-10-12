@@ -138,11 +138,11 @@ pub const Glslc = struct {
                 .stdout = stdout,
                 .stderr = stderr,
             });
+            defer poller.deinit();
             errdefer {
                 const fifo = poller.fifo(.stderr);
-                std.debug.print("erring {s}\n", .{fifo.buf[fifo.head..][0..fifo.count]});
+                std.debug.print("{s}\n", .{fifo.buf[fifo.head..][0..fifo.count]});
             }
-            defer poller.deinit();
 
             while (try poller.poll()) {
                 if (poller.fifo(.stdout).count > max_output_bytes)
