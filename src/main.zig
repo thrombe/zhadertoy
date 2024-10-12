@@ -196,29 +196,39 @@ const Renderer = struct {
         }
     };
 
-    const Vec3 = extern struct {
-        x: f32,
-        y: f32,
-        z: f32,
+    const Vec4 = extern struct {
+        x: f32 = 0.0,
+        y: f32 = 0.0,
+        z: f32 = 0.0,
         w: f32 = 0.0,
     };
-    const ShadertoyUniforms = struct {
-        time: *Buffer(f32),
-        resolution: *Buffer(Vec3),
+    const Vec3 = extern struct {
+        x: f32 = 0.0,
+        y: f32 = 0.0,
+        z: f32 = 0.0,
+    };
+    const ShadertoyUniforms = extern struct {
+        time: f32 = 0.0,
+        frame: u32 = 0,
+        width: u32,
+        height: u32,
+        mouse_x: f32 = 0.0,
+        mouse_y: f32 = 0.0,
+
+        padding: u64 = 0,
+    };
+    const ShadertoyUniformBuffers = struct {
+        uniforms: *Buffer(ShadertoyUniforms),
 
         fn init(core_mod: *mach.Core.Mod) !@This() {
             const core: *mach.Core = core_mod.state();
             const device = core.device;
             const height = core_mod.get(core.main_window, .height).?;
             const width = core_mod.get(core.main_window, .width).?;
-            var time = try Buffer(f32).new(@tagName(name) ++ " time", 0.0, allocator, device);
-            errdefer time.deinit(allocator);
             return .{
-                .time = time,
-                .resolution = try Buffer(Vec3).new(@tagName(name) ++ " resolution", Vec3{
-                    .x = @floatFromInt(width),
-                    .y = @floatFromInt(height),
-                    .z = 0.0,
+                .uniforms = try Buffer(ShadertoyUniforms).new(@tagName(name) ++ " uniforms", .{
+                    .width = width,
+                    .height = height,
                 }, allocator, device),
             };
         }
@@ -679,7 +689,7 @@ const Renderer = struct {
                 defer render_pass.release();
 
                 render_pass.setPipeline(pipeline);
-                render_pass.setBindGroup(0, bg, &.{ 0, 0 });
+                render_pass.setBindGroup(0, bg, &.{0});
                 render_pass.draw(6, 1, 0, 0);
                 render_pass.end();
             }
@@ -797,19 +807,18 @@ const Renderer = struct {
         },
         channels: Channels,
         binding: Binding,
-        uniforms: ShadertoyUniforms,
+        uniforms: ShadertoyUniformBuffers,
 
         fn init(at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod) !@This() {
             const core: *mach.Core = core_mod.state();
             const device: *gpu.Device = core.device;
 
-            const uniforms = try ShadertoyUniforms.init(core_mod);
+            const uniforms = try ShadertoyUniformBuffers.init(core_mod);
 
             var binding = Binding{ .label = "fajdl;f;jda" };
             errdefer binding.deinit(allocator);
             // LEAK: if .add() errors, those uniforms don't get deinited
-            try binding.add(uniforms.time, allocator);
-            try binding.add(uniforms.resolution, allocator);
+            try binding.add(uniforms.uniforms, allocator);
             // TODO:
             // try binding.init(@tagName(name), device, allocator);
 
@@ -1091,17 +1100,17 @@ const Renderer = struct {
             self_mod.schedule(.update_shaders);
         }
 
-        var state = &self.pri.uniforms;
-        state.time.val += self.timer.lap();
+        var state = &self.pri.uniforms.uniforms.val;
+        state.time += self.timer.lap();
+        state.frame += 1;
 
         // TODO: shadertoy uniforms
         var iter = mach.core.pollEvents();
         while (iter.next()) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
-                    _ = pos;
-                    // state.cursor_x = @floatCast(pos.pos.x);
-                    // state.cursor_y = @floatCast(pos.pos.y);
+                    state.mouse_x = @floatCast(pos.pos.x);
+                    state.mouse_y = @floatCast(pos.pos.y);
                 },
                 .mouse_press => |button| {
                     switch (button.button) {
@@ -1165,11 +1174,8 @@ const Renderer = struct {
                     }
                 },
                 .framebuffer_resize => |sze| {
-                    _ = sze;
-                    // state.render_height = sze.height;
-                    // state.render_width = sze.width;
-                    // state.display_height = sze.height;
-                    // state.display_width = sze.width;
+                    state.width = sze.width;
+                    state.height = sze.height;
                 },
                 .close => core_mod.schedule(.exit),
                 else => {},
