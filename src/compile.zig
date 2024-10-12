@@ -132,12 +132,26 @@ pub const Glslc = struct {
             }
             stdin.close();
 
-            const err = try child.wait();
+            // similar to child.collectOutput
+            const max_output_bytes = 1000 * 1000;
+            var poller = std.io.poll(allocator, enum { stdout, stderr }, .{
+                .stdout = stdout,
+                .stderr = stderr,
+            });
             errdefer {
-                const msg = stderr.readToEndAlloc(alloc, 1000 * 1000) catch unreachable;
-                std.debug.print("{s}\n", .{msg});
-                alloc.free(msg);
+                const fifo = poller.fifo(.stderr);
+                std.debug.print("erring {s}\n", .{fifo.buf[fifo.head..][0..fifo.count]});
             }
+            defer poller.deinit();
+
+            while (try poller.poll()) {
+                if (poller.fifo(.stdout).count > max_output_bytes)
+                    return error.StdoutStreamTooLong;
+                if (poller.fifo(.stderr).count > max_output_bytes)
+                    return error.StderrStreamTooLong;
+            }
+
+            const err = try child.wait();
             switch (err) {
                 .Exited => |e| {
                     if (e != 0) {
@@ -154,13 +168,10 @@ pub const Glslc = struct {
                 },
             }
 
-            const bytes = try stdout.readToEndAllocOptions(
-                alloc,
-                1000 * 1000,
-                null,
-                4,
-                null,
-            );
+            const fifo = poller.fifo(.stdout);
+            var aligned = std.ArrayListAligned(u8, 4).init(allocator);
+            try aligned.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+            const bytes = try aligned.toOwnedSlice();
             return switch (output_type) {
                 .spirv => std.mem.bytesAsSlice(u32, bytes),
                 .assembly => bytes,
