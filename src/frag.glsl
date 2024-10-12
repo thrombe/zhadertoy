@@ -121,6 +121,11 @@ layout(location = 0) out vec4 fragColor;
 void main() {
     vec2 res = iResolution.xy;
     vec2 pix = vec2(fragCoord.xy / 2.0 + 0.5) * res;
+
+#ifdef ZHADER_VFLIP
+    pix.y = iResolution.y - pix.y;
+#endif
+
     // vec2 pix = iResolution.xy * fragCoord;
     // vec2 pix = gl_FragCoord.xy;
     mainImage(fragColor, pix);
