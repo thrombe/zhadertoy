@@ -1313,6 +1313,24 @@ const Gui = struct {
         io.config_flags |= imgui.ConfigFlags_NavEnableKeyboard;
         io.font_global_scale = 1.0 / io.display_framebuffer_scale.y;
 
+        const style = imgui.getStyle();
+        style.colors[imgui.Col_Text] = imgui.Vec4{ .x = 0.93, .y = 0.93, .z = 0.93, .w = 1.00 };
+        style.colors[imgui.Col_TextDisabled] = imgui.Vec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1.00 };
+        style.colors[imgui.Col_WindowBg] = imgui.Vec4{ .x = 0.11, .y = 0.11, .z = 0.11, .w = 1.00 };
+        style.colors[imgui.Col_ChildBg] = imgui.Vec4{ .x = 0.15, .y = 0.15, .z = 0.15, .w = 1.00 };
+        style.colors[imgui.Col_Border] = imgui.Vec4{ .x = 0.30, .y = 0.30, .z = 0.30, .w = 1.00 };
+        style.colors[imgui.Col_FrameBg] = imgui.Vec4{ .x = 0.20, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.colors[imgui.Col_FrameBgHovered] = imgui.Vec4{ .x = 0.40, .y = 0.40, .z = 0.40, .w = 1.00 };
+        style.colors[imgui.Col_FrameBgActive] = imgui.Vec4{ .x = 0.50, .y = 0.50, .z = 0.50, .w = 1.00 };
+        style.colors[imgui.Col_TitleBg] = imgui.Vec4{ .x = 0.00, .y = 0.00, .z = 0.00, .w = 1.00 };
+        style.colors[imgui.Col_TitleBgActive] = imgui.Vec4{ .x = 0.20, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.colors[imgui.Col_TitleBgCollapsed] = imgui.Vec4{ .x = 0.10, .y = 0.10, .z = 0.10, .w = 1.00 };
+        style.colors[imgui.Col_Button] = imgui.Vec4{ .x = 0.80, .y = 0.20, .z = 0.20, .w = 1.00 };
+        style.colors[imgui.Col_ButtonHovered] = imgui.Vec4{ .x = 1.00, .y = 0.50, .z = 0.50, .w = 1.00 };
+        style.colors[imgui.Col_ButtonActive] = imgui.Vec4{ .x = 1.00, .y = 0.30, .z = 0.30, .w = 1.00 };
+        style.window_rounding = 5;
+        style.frame_rounding = 3;
+
         // const font_data = @embedFile("Roboto-Medium.ttf");
         // const size_pixels = 12 * io.display_framebuffer_scale.y;
 
