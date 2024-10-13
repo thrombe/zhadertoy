@@ -395,6 +395,7 @@ const Renderer = struct {
             fn release(self: *@This()) void {
                 self.bind_group.current.release();
                 self.bind_group.last_frame.release();
+                self.bind_group_layout.release();
                 self.pipeline.release();
             }
         };
@@ -814,6 +815,7 @@ const Renderer = struct {
             fn release(self: *@This()) void {
                 self.bind_group.last_frame.release();
                 self.bind_group.current.release();
+                self.bind_group_layout.release();
                 self.pipeline.release();
             }
         };
