@@ -210,6 +210,7 @@ const Renderer = struct {
     };
     const ShadertoyUniforms = extern struct {
         time: f32 = 0.0,
+        time_delta: f32 = 0.0,
         frame: u32 = 0,
         width: u32,
         height: u32,
@@ -1099,7 +1100,8 @@ const Renderer = struct {
         }
 
         var state = &self.pri.uniforms.uniforms.val;
-        state.time += self.timer.lap();
+        state.time_delta = self.timer.lap();
+        state.time += state.time_delta;
         state.frame += 1;
 
         for (app.events.items) |event| {

@@ -17,6 +17,7 @@ uniform samplerXX iChanneli;
 
 struct ZhaderUniforms {
     float time;
+    float time_delta;
     int frame;
     int width;
     int height;
@@ -30,9 +31,14 @@ uniform Uniforms {
 };
 
 #define iTime zhader_uniforms.time
+#define iTimeDelta zhader_uniforms.time_delta
 #define iFrame zhader_uniforms.frame
 #define iResolution vec3(float(zhader_uniforms.width), float(zhader_uniforms.height), 0.0)
 #define iMouse vec4(zhader_uniforms.mouse_x, zhader_uniforms.mouse_y, 0.0, 0.0)
+
+// TODO: sound :}
+float iChannelTime[4];
+float iSampleRate = 4800.0;
 
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
