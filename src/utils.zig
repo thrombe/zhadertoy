@@ -424,3 +424,78 @@ pub const Curl = struct {
         return body.toOwnedSlice();
     }
 };
+
+pub const ImageMagick = struct {
+    // - [ImageMagick – Sitemap](https://imagemagick.org/script/sitemap.php#program-interfaces)
+    // - [ImageMagick – MagickWand, C API](https://imagemagick.org/script/magick-wand.php)
+    // - [ImageMagick – MagickCore, Low-level C API](https://imagemagick.org/script/magick-core.php)
+    const magick = @cImport({
+        // @cInclude("MagickCore/MagickCore.h");
+        @cDefine("MAGICKCORE_HDRI_ENABLE", "1");
+        @cInclude("MagickWand/MagickWand.h");
+    });
+
+    pub const Pixel = extern struct {
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    };
+    pub const Image = struct {
+        buffer: []Pixel,
+        height: usize,
+        width: usize,
+
+        pub fn deinit(self: *@This()) void {
+            allocator.free(self.buffer);
+        }
+    };
+
+    pub fn decode_jpg(bytes: []u8) !Image {
+        magick.MagickWandGenesis();
+        const wand = magick.NewMagickWand() orelse {
+            return error.CouldNotGetWand;
+        };
+        defer _ = magick.DestroyMagickWand(wand);
+
+        // const pwand = magick.NewPixelWand() orelse {
+        //     return error.CouldNotGetWand;
+        // };
+        // defer _ = magick.DestroyPixelWand(pwand);
+        // if (magick.PixelSetColor(pwand, "#28282800") == magick.MagickFalse) {
+        //     return error.CouldNotSetPWandColor;
+        // }
+        // if (magick.MagickSetBackgroundColor(wand, pwand) == magick.MagickFalse) {
+        //     return error.CouldNotSetBgColor;
+        // }
+
+        if (magick.MagickReadImageBlob(wand, bytes.ptr, bytes.len) == magick.MagickFalse) {
+            return error.CouldNotReadImage;
+        }
+
+        const img_width = magick.MagickGetImageWidth(wand);
+        const img_height = magick.MagickGetImageHeight(wand);
+
+        const buffer = try allocator.alloc(Pixel, img_width * img_height);
+        errdefer allocator.free(buffer);
+
+        if (magick.MagickExportImagePixels(
+            wand,
+            0,
+            0,
+            img_width,
+            img_height,
+            "RGBA",
+            magick.FloatPixel,
+            buffer.ptr,
+        ) == magick.MagickFalse) {
+            return error.CouldNotRenderToBuffer;
+        }
+
+        return .{
+            .buffer = buffer,
+            .height = img_height,
+            .width = img_width,
+        };
+    }
+};

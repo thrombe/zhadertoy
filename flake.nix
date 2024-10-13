@@ -85,6 +85,7 @@
           gdb
           curl
           fswatch
+          imagemagick
           glslang
           shaderc
 

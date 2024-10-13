@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("curl");
     exe.linkSystemLibrary("fswatch");
 
+    exe.linkSystemLibrary2("ImageMagick", .{});
+    exe.linkSystemLibrary2("MagickWand", .{});
+    exe.linkSystemLibrary2("MagickCore", .{});
+    exe.linkLibC();
+
     // exe.linkSystemLibrary("dawn");
 
     // exe.linkSystemLibrary("glslang");

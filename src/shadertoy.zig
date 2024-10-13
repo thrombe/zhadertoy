@@ -640,6 +640,39 @@ pub const Cached = struct {
         defer allocator.free(bytes);
         return try Toy.from_json(bytes);
     }
+
+    fn media_bytes(self: *@This(), media_path: []const u8) ![]u8 {
+        const path = try std.fs.path.join(allocator, &[_][]const u8{
+            self.cache_dir,
+            media_path[1..],
+        });
+        defer allocator.free(path);
+
+        const cwd = std.fs.cwd();
+        var file = cwd.openFile(path, .{}) catch {
+            const bytes = try get_media_bytes(media_path);
+            errdefer allocator.free(bytes);
+
+            try cwd.makePath(std.fs.path.dirname(path).?);
+            const file = try cwd.createFile(path, .{});
+            defer file.close();
+
+            try file.writeAll(bytes);
+            return bytes;
+        };
+        defer file.close();
+
+        const bytes = try file.readToEndAlloc(allocator, 10 * 1000 * 1000);
+        return bytes;
+    }
+
+    fn media_img(self: *@This(), media_path: []const u8) !utils.ImageMagick.Image {
+        const bytes = try self.media_bytes(media_path);
+        defer allocator.free(bytes);
+
+        const img = try utils.ImageMagick.decode_jpg(bytes);
+        return img;
+    }
 };
 
 pub fn get_shader_json(id: []const u8) ![]const u8 {
@@ -666,9 +699,11 @@ pub fn query_shaders(query: []const u8) !void {
     // defer allocator.free(url);
 }
 
-pub fn get_media(hash: []const u8) !void {
-    const url = try std.fmt.allocPrint(allocator, base ++ "/media/a/{s}", .{hash});
+pub fn get_media_bytes(media_path: []const u8) ![]u8 {
+    const url = try std.fmt.allocPrintZ(allocator, base ++ "{s}", .{media_path});
     defer allocator.free(url);
+    const body = try Curl.get(url);
+    return body;
 }
 
 fn get(url: []const u8) ![]const u8 {
