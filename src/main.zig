@@ -16,9 +16,9 @@ const gpu = mach.wgpu;
 // The global list of Mach modules registered for use in our application.
 pub const modules = .{
     mach.Core,
-    // ImguiApp,
     App,
     Renderer,
+    Gui,
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -39,7 +39,7 @@ const Renderer = struct {
         .init = .{ .handler = init },
         .deinit = .{ .handler = deinit },
         .tick = .{ .handler = tick },
-        .render_frame = .{ .handler = render_frame },
+        .render = .{ .handler = render },
         .update_shaders = .{ .handler = update_shaders },
     };
     pub const Mod = mach.Mod(@This());
@@ -1047,34 +1047,31 @@ const Renderer = struct {
         });
     }
 
-    fn render_frame(
+    fn render(
+        app_mod: *App.Mod,
         self_mod: *Mod,
         core_mod: *mach.Core.Mod,
     ) !void {
         const self: *@This() = self_mod.state();
         const core: *mach.Core = core_mod.state();
         const device: *gpu.Device = core.device;
+        const app: *App = app_mod.state();
 
-        const label = @tagName(name) ++ ".render_frame";
+        const label = @tagName(name) ++ ".render";
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
         // TODO: more updates left
         self.pri.binding.update(encoder);
 
-        const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
-        defer back_buffer_view.release();
-
         self.pri.swap();
-        self.pri.render(encoder, back_buffer_view);
+        self.pri.render(encoder, app.rendering_data.?.screen);
 
         var command = encoder.finish(&.{ .label = label });
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
         self.gpu_err_fuse.tick();
-
-        core_mod.schedule(.present_frame);
     }
 
     fn update_shaders(
@@ -1093,8 +1090,8 @@ const Renderer = struct {
         }
     }
 
-    fn tick(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
-        defer self_mod.schedule(.render_frame);
+    fn tick(self_mod: *Mod, app_mod: *App.Mod, core_mod: *mach.Core.Mod) !void {
+        const app: *App = app_mod.state();
 
         const self: *@This() = self_mod.state();
         if (self.toyman.has_updates()) {
@@ -1105,9 +1102,7 @@ const Renderer = struct {
         state.time += self.timer.lap();
         state.frame += 1;
 
-        // TODO: shadertoy uniforms
-        var iter = mach.core.pollEvents();
-        while (iter.next()) |event| {
+        for (app.events.items) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
                     state.mouse_x = @floatCast(pos.pos.x);
@@ -1178,7 +1173,6 @@ const Renderer = struct {
                     state.width = sze.width;
                     state.height = sze.height;
                 },
-                .close => core_mod.schedule(.exit),
                 else => {},
             }
         }
@@ -1191,50 +1185,115 @@ const App = struct {
         .init = .{ .handler = init },
         .deinit = .{ .handler = deinit },
         .tick = .{ .handler = tick },
+        .render = .{ .handler = render },
+        .present_frame = .{ .handler = present_frame },
     };
     pub const Mod = mach.Mod(@This());
+
+    events: std.ArrayList(mach.core.Event),
+    rendering_data: ?struct {
+        screen: *gpu.TextureView,
+    } = null,
 
     fn init(
         self_mod: *Mod,
         core_mod: *mach.Core.Mod,
         renderer_mod: *Renderer.Mod,
+        gui_mod: *Gui.Mod,
     ) !void {
         core_mod.schedule(.init);
         defer core_mod.schedule(.start);
 
-        // NOTE: core should be initialized before renderer
+        // NOTE: initialize after core
+        gui_mod.schedule(.init);
         renderer_mod.schedule(.init);
 
-        self_mod.init(.{});
+        self_mod.init(.{
+            .events = std.ArrayList(mach.core.Event).init(allocator),
+        });
     }
 
-    fn deinit(core_mod: *mach.Core.Mod, renderer_mod: *Renderer.Mod) !void {
+    fn deinit(
+        self_mod: *Mod,
+        core_mod: *mach.Core.Mod,
+        renderer_mod: *Renderer.Mod,
+        gui_mod: *Gui.Mod,
+    ) !void {
+        const self: *@This() = self_mod.state();
+
+        gui_mod.schedule(.deinit);
         renderer_mod.schedule(.deinit);
         core_mod.schedule(.deinit);
+
+        if (self.rendering_data) |data| data.screen.release();
+        self.rendering_data = null;
+        self.events.deinit();
     }
 
     fn tick(
+        self_mod: *Mod,
         renderer_mod: *Renderer.Mod,
+        core_mod: *mach.Core.Mod,
+        gui_mod: *Gui.Mod,
     ) !void {
+        const self: *@This() = self_mod.state();
         renderer_mod.schedule(.tick);
+        gui_mod.schedule(.tick);
 
-        // NOOOO: can't poll events in multiple systems (it consumes)
-        // var iter = mach.core.pollEvents();
+        defer self_mod.schedule(.render);
+
+        self.events.clearRetainingCapacity();
+
+        var iter = mach.core.pollEvents();
+        while (iter.next()) |event| {
+            try self.events.append(event);
+            switch (event) {
+                .close => core_mod.schedule(.exit),
+                else => {},
+            }
+        }
+    }
+
+    fn render(
+        self_mod: *Mod,
+        renderer_mod: *Renderer.Mod,
+        gui_mod: *Gui.Mod,
+    ) void {
+        const self: *@This() = self_mod.state();
+        self.rendering_data = .{
+            .screen = mach.core.swap_chain.getCurrentTextureView().?,
+        };
+
+        renderer_mod.schedule(.render);
+        gui_mod.schedule(.render);
+
+        self_mod.schedule(.present_frame);
+    }
+
+    fn present_frame(
+        self_mod: *Mod,
+        core_mod: *mach.Core.Mod,
+    ) void {
+        const self: *@This() = self_mod.state();
+
+        self.rendering_data.?.screen.release();
+        self.rendering_data = null;
+
+        core_mod.schedule(.present_frame);
     }
 };
 
-const ImguiApp = struct {
+const Gui = struct {
     const imgui = @import("imgui");
     const imgui_mach = imgui.backends.mach;
 
     var allocator_imgui = allocator;
 
-    pub const name = .app;
+    pub const name = .gui;
     pub const systems = .{
         .init = .{ .handler = init },
         .deinit = .{ .handler = deinit },
-        .tick = .{ .handler = update },
-        .imgui_init = .{ .handler = imgui_init },
+        .tick = .{ .handler = tick },
         .render = .{ .handler = render },
     };
     pub const Mod = mach.Mod(@This());
@@ -1243,24 +1302,8 @@ const ImguiApp = struct {
     f: f32 = 0.0,
     color: [3]f32 = undefined,
 
-    inited: bool = false,
-
-    pub fn init(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
-        core_mod.schedule(.init);
-        defer core_mod.schedule(.start);
-
-        app_mod.schedule(.imgui_init);
-
-        app_mod.init(.{
-            .title_timer = try mach.Timer.start(),
-        });
-    }
-
-    pub fn imgui_init(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+    pub fn init(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
         const core: *mach.Core = core_mod.state();
-        const app: *@This() = app_mod.state();
-
-        app.inited = true;
 
         imgui.setZigAllocator(&allocator_imgui);
         _ = imgui.createContext(null);
@@ -1282,36 +1325,28 @@ const ImguiApp = struct {
         // font_cfg.rasterizer_density = 1.0;
         // font_cfg.ellipsis_char = imgui.UNICODE_CODEPOINT_MAX;
         // _ = io.fonts.?.addFontFromMemoryTTF(@constCast(@ptrCast(font_data.ptr)), font_data.len, size_pixels, &font_cfg, null);
+
+        self_mod.init(.{
+            .title_timer = try mach.Timer.start(),
+        });
     }
 
-    pub fn deinit(app_mod: *Mod) void {
-        const app: *@This() = app_mod.state();
-        _ = app;
-
+    pub fn deinit() void {
         imgui_mach.shutdown();
         imgui.destroyContext(null);
     }
 
-    pub fn update(app_mod: *Mod) !void {
-        const app: *@This() = app_mod.state();
+    pub fn tick(app_mod: *App.Mod, self_mod: *Mod) !void {
+        const self: *@This() = self_mod.state();
+        const app: *App = app_mod.state();
 
-        var iter = mach.core.pollEvents();
-        while (iter.next()) |event| {
+        for (app.events.items) |event| {
             _ = imgui_mach.processEvent(event);
-
-            switch (event) {
-                .close => return error.Close,
-                else => {},
-            }
-        }
-
-        if (app.inited) {
-            app_mod.schedule(.render);
         }
 
         // update the window title every second
-        if (app.title_timer.read() >= 1.0) {
-            app.title_timer.reset();
+        if (self.title_timer.read() >= 1.0) {
+            self.title_timer.reset();
             try mach.core.printTitle("ImGui [ {d}fps ] [ Input {d}hz ]", .{
                 mach.core.frameRate(),
                 mach.core.inputRate(),
@@ -1319,9 +1354,10 @@ const ImguiApp = struct {
         }
     }
 
-    fn render(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+    fn render(self_mod: *Mod, app_mod: *App.Mod, core_mod: *mach.Core.Mod) !void {
         const core: *mach.Core = core_mod.state();
-        const app: *@This() = app_mod.state();
+        const self: *@This() = self_mod.state();
+        const app: *App = app_mod.state();
 
         const io = imgui.getIO();
 
@@ -1329,19 +1365,22 @@ const ImguiApp = struct {
         imgui.newFrame();
 
         imgui.text("Hello, world!");
-        _ = imgui.sliderFloat("float", &app.f, 0.0, 1.0);
-        _ = imgui.colorEdit3("color", &app.color, imgui.ColorEditFlags_None);
+        _ = imgui.sliderFloat("float", &self.f, 0.0, 1.0);
+        _ = imgui.colorEdit3("color", &self.color, imgui.ColorEditFlags_None);
         imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
         imgui.showDemoWindow(null);
 
         imgui.render();
 
-        const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
-        defer back_buffer_view.release();
         const color_attachment = gpu.RenderPassColorAttachment{
-            .view = back_buffer_view,
-            .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
-            .load_op = .clear,
+            .view = app.rendering_data.?.screen,
+            .clear_value = gpu.Color{
+                .r = 40.0 / 255.0,
+                .g = 40.0 / 255.0,
+                .b = 40.0 / 255.0,
+                .a = 1,
+            },
+            .load_op = .load,
             .store_op = .store,
         };
 
@@ -1359,10 +1398,7 @@ const ImguiApp = struct {
         defer command.release();
         encoder.release();
 
-        var queue = core.queue;
-        queue.submit(&[_]*gpu.CommandBuffer{command});
-
-        core_mod.schedule(.present_frame);
+        core.queue.submit(&[_]*gpu.CommandBuffer{command});
     }
 };
 
