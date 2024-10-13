@@ -154,7 +154,7 @@ pub const ToyMan = struct {
         const target = try std.fs.cwd().realpathAlloc(allocator, path);
         defer allocator.free(target);
 
-        const active = try prepare_toy(self.playground, &toy.value, target);
+        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
         self.active_toy = active;
 
@@ -173,7 +173,7 @@ pub const ToyMan = struct {
         var toy = try Toy.from_file(toypath);
         defer toy.deinit();
 
-        const active = try prepare_toy(self.playground, &toy.value, target);
+        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
         self.active_toy = active;
 
@@ -190,7 +190,7 @@ pub const ToyMan = struct {
     //   - cube.glsl
     //   - buffer1A.glsl: where the '1' represents execution order of the buffers
     //       (shadertoy buffers ABCD can be in any order, but they execute in the order they are defined in)
-    pub fn prepare_toy(playground: []const u8, toy: *Toy, dir_path: []const u8) !ActiveToy {
+    pub fn prepare_toy(cache: *Cached, playground: []const u8, toy: *Toy, dir_path: []const u8) !ActiveToy {
         var dir = try std.fs.openDirAbsolute(dir_path, .{ .no_follow = true });
         defer dir.close();
 
@@ -255,7 +255,7 @@ pub const ToyMan = struct {
                             .name = name,
                             .typ = out_buf,
                         },
-                        .inputs = try ActiveToy.Inputs.from(pass.inputs),
+                        .inputs = try ActiveToy.Inputs.from(pass.inputs, cache),
                     };
                 },
                 .image => {
@@ -266,7 +266,7 @@ pub const ToyMan = struct {
                         try buf.writeAll(pass.code);
                     }
 
-                    t.passes.image.inputs = try ActiveToy.Inputs.from(pass.inputs);
+                    t.passes.image.inputs = try ActiveToy.Inputs.from(pass.inputs, cache);
                 },
                 else => {
                     std.debug.print("unimplemented renderpass type: {any}\n", .{pass.type});
@@ -329,6 +329,21 @@ pub const ActiveToy = struct {
         sampler: Sampler,
         from_current_frame: bool = false,
 
+        fn from(input: Toy.Input, cache: *Cached) !@This() {
+            switch (input.ctype) {
+                .buffer => {
+                    return .{
+                        .typ = try std.meta.intToEnum(Buf, input.id),
+                        .sampler = input.sampler,
+                    };
+                },
+                else => |typ| {
+                    std.debug.print("did not handle ctype '{any}'\n", .{typ});
+                    @panic("");
+                },
+            }
+        }
+
         fn mark_current_frame_input(self: *@This(), typ: Buf) void {
             if (self.typ == typ) {
                 self.from_current_frame = true;
@@ -341,33 +356,21 @@ pub const ActiveToy = struct {
         input3: ?Input = null,
         input4: ?Input = null,
 
-        fn from(inputs: []Toy.Input) !@This() {
+        fn from(inputs: []Toy.Input, cache: *Cached) !@This() {
             var self: @This() = .{};
             for (inputs, 1..) |input, i| {
                 switch (i) {
                     1 => {
-                        self.input1 = .{
-                            .typ = try std.meta.intToEnum(Buf, input.id),
-                            .sampler = input.sampler,
-                        };
+                        self.input1 = try Input.from(input, cache);
                     },
                     2 => {
-                        self.input2 = .{
-                            .typ = try std.meta.intToEnum(Buf, input.id),
-                            .sampler = input.sampler,
-                        };
+                        self.input2 = try Input.from(input, cache);
                     },
                     3 => {
-                        self.input3 = .{
-                            .typ = try std.meta.intToEnum(Buf, input.id),
-                            .sampler = input.sampler,
-                        };
+                        self.input3 = try Input.from(input, cache);
                     },
                     4 => {
-                        self.input4 = .{
-                            .typ = try std.meta.intToEnum(Buf, input.id),
-                            .sampler = input.sampler,
-                        };
+                        self.input4 = try Input.from(input, cache);
                     },
                     else => return error.TooManyInputs,
                 }
