@@ -46,37 +46,45 @@ float iSampleRate = 4800.0;
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
 
-// #ifdef ZHADER_CHANNEL0
+#ifdef ZHADER_CHANNEL0
 layout(set = 0, binding = 1)
 uniform texture2D iCChannel0;
 layout(set = 0, binding = 2)
 uniform sampler iSChannel0;
 #define iChannel0 sampler2D(iCChannel0, iSChannel0)
-// #endif // ZHADER_CHANNEL0
+#endif // ZHADER_CHANNEL0
 
-// #ifdef ZHADER_CHANNEL1
+#ifdef ZHADER_CHANNEL1
 layout(set = 0, binding = 3)
 uniform texture2D iCChannel1;
 layout(set = 0, binding = 4)
 uniform sampler iSChannel1;
 #define iChannel1 sampler2D(iCChannel1, iSChannel1)
-// #endif // ZHADER_CHANNEL1
+#endif // ZHADER_CHANNEL1
 
-// #ifdef ZHADER_CHANNEL2
+#ifdef ZHADER_CHANNEL2
 layout(set = 0, binding = 5)
 uniform texture2D iCChannel2;
 layout(set = 0, binding = 6)
 uniform sampler iSChannel2;
 #define iChannel2 sampler2D(iCChannel2, iSChannel2)
-// #endif // ZHADER_CHANNEL2
+#endif // ZHADER_CHANNEL2
 
-// #ifdef ZHADER_CHANNEL3
+#ifdef ZHADER_CHANNEL3
 layout(set = 0, binding = 7)
 uniform texture2D iCChannel3;
 layout(set = 0, binding = 8)
 uniform sampler iSChannel3;
 #define iChannel3 sampler2D(iCChannel3, iSChannel3)
-// #endif // ZHADER_CHANNEL3
+#endif // ZHADER_CHANNEL3
+
+#ifdef ZHADER_INCLUDE_SCREEN
+layout(set = 0, binding = 1)
+uniform texture2D screen_tex;
+layout(set = 0, binding = 2)
+uniform sampler screen_sampler;
+#define screen sampler2D(screen_tex, screen_sampler)
+#endif // ZHADER_INCLUDE_SCREEN
 
 // NOTE: 'sampler' is reserved in vulkan glsl
 #define sampler zhader_sampler
@@ -109,6 +117,12 @@ bool isInf(double x) {
     return (x > ZHADER_INF || x < -ZHADER_INF);
 }
  
+#ifdef ZHADER_INCLUDE_SCREEN
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    fragColor = texture(screen, fragCoord/iResolution.xy);
+}
+#endif // ZHADER_INCLUDE_SCREEN
+
 #ifdef ZHADER_COMMON
 #include "common.glsl"
 #endif // ZHADER_COMMON

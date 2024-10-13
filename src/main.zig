@@ -247,6 +247,105 @@ const Renderer = struct {
     //   - 2 bind groups for each shader. 2 cuz we need to swap textures each frame
     //   - all textures * 2
     const PlaygroundRenderInfo = struct {
+        const ScreenPass = struct {
+            pipeline: *gpu.RenderPipeline,
+            bind_group: *gpu.BindGroup,
+            bind_group_layout: *gpu.BindGroupLayout,
+
+            fn init(
+                render_config: *const Config,
+                core_mod: *mach.Core.Mod,
+                binding: *Binding,
+                view: *gpu.TextureView,
+                sampler: *gpu.Sampler,
+            ) !@This() {
+                const core: *mach.Core = core_mod.state();
+                const device = core.device;
+
+                var bind = try create_bind_group(device, binding, view, sampler);
+                errdefer {
+                    bind.group.release();
+                    bind.layout.release();
+                }
+                var pipeline = try Pass.create_pipeline(device, render_config, false, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .screen);
+                errdefer pipeline.release();
+
+                return .{
+                    .bind_group_layout = bind.layout,
+                    .bind_group = bind.group,
+                    .pipeline = pipeline,
+                };
+            }
+
+            fn create_bind_group(
+                device: *gpu.Device,
+                binding: *Binding,
+                view: *gpu.TextureView,
+                sampler: *gpu.Sampler,
+            ) !struct { group: *gpu.BindGroup, layout: *gpu.BindGroupLayout } {
+                const alloc = allocator;
+                var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
+                defer layout_entries.deinit(alloc);
+                var bind_group_entries = std.ArrayListUnmanaged(gpu.BindGroup.Entry){};
+                defer bind_group_entries.deinit(alloc);
+
+                for (binding.buffers.items, 0..) |*buf, i| {
+                    try layout_entries.append(alloc, buf.bindGroupLayoutEntry(@intCast(i)));
+
+                    try bind_group_entries.append(alloc, buf.bindGroupEntry(@intCast(i)));
+                }
+
+                const visibility = .{
+                    .vertex = true,
+                    .fragment = true,
+                    .compute = true,
+                };
+
+                try layout_entries.append(alloc, gpu.BindGroupLayout.Entry.texture(
+                    @intCast(layout_entries.items.len),
+                    visibility,
+                    .unfilterable_float,
+                    .dimension_2d,
+                    false,
+                ));
+                try bind_group_entries.append(alloc, gpu.BindGroup.Entry.textureView(@intCast(bind_group_entries.items.len), view));
+                try layout_entries.append(alloc, gpu.BindGroupLayout.Entry.sampler(
+                    @intCast(layout_entries.items.len),
+                    visibility,
+                    .non_filtering,
+                ));
+                try bind_group_entries.append(alloc, gpu.BindGroup.Entry.sampler(@intCast(bind_group_entries.items.len), sampler));
+
+                const bind_group_layout = device.createBindGroupLayout(
+                    &gpu.BindGroupLayout.Descriptor.init(.{
+                        .label = "bind grpu",
+                        .entries = layout_entries.items,
+                    }),
+                );
+                const bind_group = device.createBindGroup(
+                    &gpu.BindGroup.Descriptor.init(.{
+                        .label = "bind grpup adfasf",
+                        .layout = bind_group_layout,
+                        .entries = bind_group_entries.items,
+                    }),
+                );
+
+                return .{
+                    .group = bind_group,
+                    .layout = bind_group_layout,
+                };
+            }
+
+            fn render(self: *@This(), encoder: *gpu.CommandEncoder, screen: *gpu.TextureView) void {
+                Pass._render_pass(self.pipeline, self.bind_group, encoder, screen);
+            }
+
+            fn release(self: *@This()) void {
+                self.bind_group.release();
+                self.bind_group_layout.release();
+                self.pipeline.release();
+            }
+        };
         const ImagePass = struct {
             pipeline: *gpu.RenderPipeline,
             bind_group: struct {
@@ -275,7 +374,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, render_config, &inputs, at.has_common, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .image);
+                var pipeline = try Pass.create_pipeline(device, render_config, at.has_common, bind.layout, .rgba32_float, .image);
                 errdefer pipeline.release();
 
                 return .{
@@ -326,7 +425,7 @@ const Renderer = struct {
                 input3: ?Input,
                 input4: ?Input,
 
-                fn init(device: *gpu.Device, inputs: *Shadertoy.ActiveToy.Inputs) @This() {
+                fn init(device: *gpu.Device, inputs: *const Shadertoy.ActiveToy.Inputs) @This() {
                     return .{
                         .input1 = Input.init(device, inputs.input1),
                         .input2 = Input.init(device, inputs.input2),
@@ -372,7 +471,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, render_config, &inputs, at.has_common, bind.layout, .rgba32_float, switch (include) {
+                var pipeline = try create_pipeline(device, render_config, at.has_common, bind.layout, .rgba32_float, switch (include) {
                     .buffer1 => .buffer1,
                     .buffer2 => .buffer2,
                     .buffer3 => .buffer3,
@@ -549,11 +648,10 @@ const Renderer = struct {
             fn create_pipeline(
                 device: *gpu.Device,
                 render_config: *const Config,
-                inputs: *Inputs,
                 has_common: bool,
                 bg_layout: *gpu.BindGroupLayout,
                 format: gpu.Texture.Format,
-                include: enum { image, buffer1, buffer2, buffer3, buffer4 },
+                include: enum { screen, image, buffer1, buffer2, buffer3, buffer4 },
             ) !*gpu.RenderPipeline {
                 var definitions = std.ArrayList([]const u8).init(allocator);
                 defer {
@@ -573,18 +671,23 @@ const Renderer = struct {
                 //  buffer vflip = false
                 switch (include) {
                     .image => {},
-                    .buffer1, .buffer2, .buffer3, .buffer4 => {
+                    .screen, .buffer1, .buffer2, .buffer3, .buffer4 => {
                         try definitions.append(try allocator.dupe(u8, "ZHADER_VFLIP"));
                     },
                 }
 
-                _ = inputs;
-                // if (inputs.input1) |_| try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
-                // if (inputs.input2) |_| try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
-                // if (inputs.input3) |_| try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
-                // if (inputs.input4) |_| try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
+                switch (include) {
+                    .screen => {},
+                    .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
+                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
+                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
+                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
+                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
+                    },
+                }
 
                 try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (include) {
+                    .screen => "SCREEN",
                     .image => "IMAGE",
                     .buffer1 => "BUF1",
                     .buffer2 => "BUF2",
@@ -719,6 +822,25 @@ const Renderer = struct {
                 texture: *gpu.Texture,
                 view: *gpu.TextureView,
 
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format) @This() {
+                    const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .size = size,
+                        .dimension = .dimension_2d,
+                        .usage = .{
+                            .copy_src = true,
+                            .texture_binding = true,
+                            .render_attachment = true,
+                        },
+                        .format = format,
+                        // .view_format = &[_]_{},
+                    });
+                    const tex = device.createTexture(&tex_desc);
+                    return .{
+                        .texture = tex,
+                        .view = tex.createView(&.{}),
+                    };
+                }
+
                 fn release(self: *@This()) void {
                     self.view.release();
                     self.texture.destroy();
@@ -728,28 +850,9 @@ const Renderer = struct {
             last_frame: Tex,
 
             fn init(device: *gpu.Device, size: gpu.Extent3D) @This() {
-                const tex_desc = gpu.Texture.Descriptor.init(.{
-                    .size = size,
-                    .dimension = .dimension_2d,
-                    .usage = .{
-                        .texture_binding = true,
-                        .render_attachment = true,
-                    },
-                    .format = .rgba32_float,
-                    // .view_format = &[_]_{},
-                });
-                const curr = device.createTexture(&tex_desc);
-                const last = device.createTexture(&tex_desc);
-
                 return .{
-                    .current = .{
-                        .texture = curr,
-                        .view = curr.createView(&.{}),
-                    },
-                    .last_frame = .{
-                        .texture = last,
-                        .view = last.createView(&.{}),
-                    },
+                    .current = Tex.init(device, size, .rgba32_float),
+                    .last_frame = Tex.init(device, size, .rgba32_float),
                 };
             }
 
@@ -807,6 +910,7 @@ const Renderer = struct {
             }
         };
         pass: struct {
+            screen: ScreenPass,
             image: ImagePass,
             buffer1: ?Pass,
             buffer2: ?Pass,
@@ -818,6 +922,10 @@ const Renderer = struct {
             fn init() !@This() {
                 return .{};
             }
+        },
+        screen: struct {
+            tex: Channel.Tex,
+            sampler: *gpu.Sampler,
         },
         channels: Channels,
         binding: Binding,
@@ -838,11 +946,12 @@ const Renderer = struct {
 
             const height = core_mod.get(core.main_window, .height).?;
             const width = core_mod.get(core.main_window, .width).?;
-            var channels = Channels.init(device, .{
+            const size = gpu.Extent3D{
                 .width = width,
                 .height = height,
                 .depth_or_array_layers = 1,
-            });
+            };
+            var channels = Channels.init(device, size);
             errdefer channels.release();
 
             const empty_tex = device.createTexture(&gpu.Texture.Descriptor.init(.{
@@ -865,6 +974,17 @@ const Renderer = struct {
                 .sampler = device.createSampler(&.{}),
             };
             errdefer empty_input.release();
+            var screen = .{
+                .tex = Channel.Tex.init(device, size, .rgba32_float),
+                .sampler = device.createSampler(&.{
+                    // .mag_filter = .linear,
+                    // .min_filter = .linear,
+                }),
+            };
+            errdefer screen.tex.release();
+            errdefer screen.sampler.release();
+            var screen_pass = try ScreenPass.init(render_config, core_mod, &binding, screen.tex.view, screen.sampler);
+            errdefer screen_pass.release();
             var image_pass = try ImagePass.init(at, render_config, core_mod, &channels, &binding, &empty_input);
             errdefer image_pass.release();
             var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
@@ -878,6 +998,7 @@ const Renderer = struct {
 
             return .{
                 .pass = .{
+                    .screen = screen_pass,
                     .image = image_pass,
                     .buffer1 = pass1,
                     .buffer2 = pass2,
@@ -885,6 +1006,7 @@ const Renderer = struct {
                     .buffer4 = pass4,
                     .empty_input = empty_input,
                 },
+                .screen = screen,
                 .uniforms = uniforms,
                 .binding = binding,
                 .channels = channels,
@@ -952,10 +1074,12 @@ const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.render(encoder, self.channels.view(buf.output));
             if (self.pass.buffer3) |*buf| buf.render(encoder, self.channels.view(buf.output));
             if (self.pass.buffer4) |*buf| buf.render(encoder, self.channels.view(buf.output));
-            self.pass.image.render(encoder, screen);
+            self.pass.image.render(encoder, self.screen.tex.view);
+            self.pass.screen.render(encoder, screen);
         }
 
         fn release(self: *@This()) void {
+            self.pass.screen.release();
             self.pass.image.release();
             if (self.pass.buffer1) |*buf| buf.release();
             if (self.pass.buffer2) |*buf| buf.release();
@@ -1005,6 +1129,8 @@ const Renderer = struct {
     const Config = struct {
         shader_compile_opt: compile.Glslc.Compiler.Opt = .fast,
         shader_dump_assembly: bool = false,
+        pause_shader: bool = false,
+        ignore_pause_fuse: Fuse = .{},
     };
 
     timer: mach.Timer,
@@ -1087,7 +1213,11 @@ const Renderer = struct {
         self.pri.binding.update(encoder);
 
         self.pri.swap();
-        self.pri.render(encoder, app.rendering_data.?.screen);
+        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse()) {
+            self.pri.render(encoder, app.rendering_data.?.screen);
+        } else {
+            self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
+        }
 
         var command = encoder.finish(&.{ .label = label });
         defer command.release();
@@ -1112,7 +1242,7 @@ const Renderer = struct {
         }
     }
 
-    fn tick(self_mod: *Mod, app_mod: *App.Mod, core_mod: *mach.Core.Mod) !void {
+    fn tick(self_mod: *Mod, app_mod: *App.Mod) !void {
         const app: *App = app_mod.state();
 
         const self: *@This() = self_mod.state();
@@ -1122,7 +1252,9 @@ const Renderer = struct {
 
         var state = &self.pri.uniforms.uniforms.val;
         state.time_delta = self.timer.lap();
-        state.time += state.time_delta;
+        if (!self.config.pause_shader) {
+            state.time += state.time_delta;
+        }
         state.frame += 1;
 
         for (app.events.items) |event| {
@@ -1131,6 +1263,7 @@ const Renderer = struct {
                     if (state.mouse_left) {
                         state.mouse_x = @floatCast(pos.pos.x);
                         state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - pos.pos.y);
+                        _ = self.config.ignore_pause_fuse.fuse();
                     }
                 },
                 .mouse_press => |button| {
@@ -1181,6 +1314,7 @@ const Renderer = struct {
                 .framebuffer_resize => |sze| {
                     state.width = sze.width;
                     state.height = sze.height;
+                    _ = self.config.ignore_pause_fuse.fuse();
                 },
                 else => {},
             }
@@ -1399,6 +1533,7 @@ const Gui = struct {
             if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
                 imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
                 _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
+                _ = imgui.checkbox("pause shader", &renderer.config.pause_shader);
 
                 enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
                 pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
