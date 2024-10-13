@@ -1402,7 +1402,7 @@ const Gui = struct {
 
         imgui.setNextWindowPos(.{ .x = 5, .y = 5 }, imgui.Cond_Once);
         // imgui.setNextWindowSize(.{ .x = 400, .y = 300 }, imgui.Cond_Once);
-        imgui.setNextWindowCollapsed(true, imgui.Cond_Once);
+        // imgui.setNextWindowCollapsed(true, imgui.Cond_Once);
         if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
             imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
             _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
