@@ -1407,7 +1407,7 @@ const Gui = struct {
             imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
             _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
 
-            enum_checkbox(&renderer.config.shader_compile_opt);
+            enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
         }
         imgui.end();
 
@@ -1445,7 +1445,7 @@ const Gui = struct {
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
     }
 
-    fn enum_checkbox(enum_ptr: anytype) void {
+    fn enum_checkbox(enum_ptr: anytype, title: [*:0]const u8) void {
         const opt_modes = comptime blk: {
             const fields = @typeInfo(@TypeOf(enum_ptr.*)).Enum.fields;
             var arr: [fields.len][*:0]const u8 = undefined;
@@ -1460,7 +1460,7 @@ const Gui = struct {
                 opt_index = @intCast(i);
             }
         }
-        _ = imgui.comboChar("shader compile opt mode", &opt_index, &opt_modes, 3);
+        _ = imgui.comboChar(title, &opt_index, &opt_modes, 3);
         enum_ptr.* = std.meta.stringToEnum(@TypeOf(enum_ptr.*), std.mem.span(opt_modes[@intCast(opt_index)])).?;
     }
 };
