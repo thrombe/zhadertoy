@@ -1002,6 +1002,7 @@ const Renderer = struct {
     const Config = struct {
         shader_compile_opt: compile.Glslc.Compiler.Opt = .fast,
         shader_dump_assembly: bool = false,
+        pause_cursor: bool = false,
     };
 
     timer: mach.Timer,
@@ -1125,8 +1126,10 @@ const Renderer = struct {
         for (app.events.items) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
-                    state.mouse_x = @floatCast(pos.pos.x);
-                    state.mouse_y = @floatCast(pos.pos.y);
+                    if (!self.config.pause_cursor) {
+                        state.mouse_x = @floatCast(pos.pos.x);
+                        state.mouse_y = @floatCast(pos.pos.y);
+                    }
                 },
                 .mouse_press => |button| {
                     switch (button.button) {
@@ -1164,22 +1167,6 @@ const Renderer = struct {
                     switch (ev.key) {
                         .escape => {
                             core_mod.schedule(.exit);
-                        },
-                        .one => {
-                            try self.toyman.load_shadertoy("4td3zj");
-                        },
-                        .two => {
-                            // try self.toyman.load_shadertoy("lXjyWt");
-                            try self.toyman.load_shadertoy("lX2yDt");
-                        },
-                        .three => {
-                            try self.toyman.load_shadertoy("NslGRN");
-                        },
-                        .four => {
-                            try self.toyman.load_shadertoy("4ttSWf");
-                        },
-                        .zero => {
-                            try self.toyman.load_zhadertoy("new");
                         },
                         else => {},
                     }
@@ -1400,20 +1387,24 @@ const Gui = struct {
 
         const io = imgui.getIO();
 
-        imgui.setNextWindowPos(.{ .x = 5, .y = 5 }, imgui.Cond_Once);
-        // imgui.setNextWindowSize(.{ .x = 400, .y = 300 }, imgui.Cond_Once);
-        // imgui.setNextWindowCollapsed(true, imgui.Cond_Once);
-        if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
-            imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
-            _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
+        {
+            defer imgui.render();
 
-            enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
+            imgui.setNextWindowPos(.{ .x = 5, .y = 5 }, imgui.Cond_Once);
+            // imgui.setNextWindowSize(.{ .x = 400, .y = 300 }, imgui.Cond_Once);
+            // imgui.setNextWindowCollapsed(true, imgui.Cond_Once);
+            defer imgui.end();
+            if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
+                imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
+                _ = imgui.checkbox("pause cursor", &renderer.config.pause_cursor);
+                _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
+
+                enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
+                pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
+            }
+
+            // imgui.showDemoWindow(null);
         }
-        imgui.end();
-
-        // imgui.showDemoWindow(null);
-
-        imgui.render();
 
         const color_attachment = gpu.RenderPassColorAttachment{
             .view = app.rendering_data.?.screen,
@@ -1445,6 +1436,38 @@ const Gui = struct {
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
     }
 
+    var pick_toy_index: c_int = 0;
+    fn pick_toy(renderer: *Renderer) !void {
+        const toys = [_][*:0]const u8{
+            "z:new: new yo",
+            "z:nonuniform_control_flow: broken",
+            "s:4td3zj: curly stuff",
+            "s:lXjyWt: neon blob",
+            "s:lX2yDt: earth",
+            "s:NslGRN: cool glass cube",
+            "s:4ttSWf: iq forest",
+            "s:MdX3Rr: iq 3d noise mountain",
+            "s:WlKXzm: satellite thing",
+            "s:43lfRB: cool blue 3d fractal",
+        };
+        imgui.setNextItemWidth(200);
+        _ = imgui.comboChar("shadertoy", &pick_toy_index, &toys, toys.len);
+        imgui.sameLine();
+        const toy = toys[@intCast(pick_toy_index)];
+        if (imgui.button("reload")) {
+            const id = std.mem.span(@as([*:':']const u8, @ptrCast(toy[2..])));
+            switch (toy[0]) {
+                's' => {
+                    try renderer.toyman.load_shadertoy(id);
+                },
+                'z' => {
+                    try renderer.toyman.load_zhadertoy(id);
+                },
+                else => return error.UnknownTypeOfToy,
+            }
+        }
+    }
+
     fn enum_checkbox(enum_ptr: anytype, title: [*:0]const u8) void {
         const opt_modes = comptime blk: {
             const fields = @typeInfo(@TypeOf(enum_ptr.*)).Enum.fields;
@@ -1460,7 +1483,7 @@ const Gui = struct {
                 opt_index = @intCast(i);
             }
         }
-        _ = imgui.comboChar(title, &opt_index, &opt_modes, 3);
+        _ = imgui.comboChar(title, &opt_index, &opt_modes, opt_modes.len);
         enum_ptr.* = std.meta.stringToEnum(@TypeOf(enum_ptr.*), std.mem.span(opt_modes[@intCast(opt_index)])).?;
     }
 };
