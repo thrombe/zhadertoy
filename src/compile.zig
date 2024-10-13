@@ -19,11 +19,12 @@ pub const Glslc = struct {
     }
 
     pub const Compiler = struct {
-        opt: enum {
+        pub const Opt = enum {
             none,
             small,
             fast,
-        } = .none,
+        };
+        opt: Opt = .none,
         lang: enum {
             glsl,
             hlsl,
@@ -49,12 +50,9 @@ pub const Glslc = struct {
             },
         };
 
-        pub fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: []const u8) !void {
+        pub fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: *const Code) !void {
             // std.debug.print("{s}\n", .{code});
-            const bytes = try self.compile(alloc, &.{
-                .code = code,
-                .definitions = &[_][]const u8{},
-            }, .assembly);
+            const bytes = try self.compile(alloc, code, .assembly);
             defer alloc.free(bytes);
             std.debug.print("{s}\n", .{bytes});
         }

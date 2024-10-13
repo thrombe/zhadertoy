@@ -255,6 +255,7 @@ const Renderer = struct {
 
             fn init(
                 at: *Shadertoy.ActiveToy,
+                render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 channels: *Channels,
                 binding: *Binding,
@@ -271,7 +272,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, &inputs, at.has_common, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .image);
+                var pipeline = try Pass.create_pipeline(device, render_config, &inputs, at.has_common, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .image);
                 errdefer pipeline.release();
 
                 return .{
@@ -350,6 +351,7 @@ const Renderer = struct {
 
             fn init(
                 at: *Shadertoy.ActiveToy,
+                render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 pass: *Shadertoy.ActiveToy.BufferPass,
                 channels: *Channels,
@@ -367,7 +369,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, &inputs, at.has_common, bind.layout, .rgba32_float, switch (include) {
+                var pipeline = try create_pipeline(device, render_config, &inputs, at.has_common, bind.layout, .rgba32_float, switch (include) {
                     .buffer1 => .buffer1,
                     .buffer2 => .buffer2,
                     .buffer3 => .buffer3,
@@ -543,6 +545,7 @@ const Renderer = struct {
 
             fn create_pipeline(
                 device: *gpu.Device,
+                render_config: *const Config,
                 inputs: *Inputs,
                 has_common: bool,
                 bg_layout: *gpu.BindGroupLayout,
@@ -586,16 +589,19 @@ const Renderer = struct {
                     .buffer4 => "BUF4",
                 }}));
 
-                var compiler = Glslc.Compiler{ .opt = .fast };
+                var compiler = Glslc.Compiler{ .opt = render_config.shader_compile_opt };
                 compiler.stage = .vertex;
-                // _ = compiler.dump_assembly(allocator, vert);
+                const vert: Glslc.Compiler.Code = .{ .path = .{
+                    .main = "./shaders/vert.glsl",
+                    .include = &[_][]const u8{config.paths.playground},
+                    .definitions = definitions.items,
+                } };
+                // if (render_config.shader_dump_assembly) {
+                //     _ = compiler.dump_assembly(allocator, &vert);
+                // }
                 const vertex_bytes = try compiler.compile(
                     allocator,
-                    &.{ .path = .{
-                        .main = "./shaders/vert.glsl",
-                        .include = &[_][]const u8{config.paths.playground},
-                        .definitions = definitions.items,
-                    } },
+                    &vert,
                     .spirv,
                 );
                 defer allocator.free(vertex_bytes);
@@ -609,14 +615,17 @@ const Renderer = struct {
                 defer vertex_shader_module.release();
 
                 compiler.stage = .fragment;
-                // _ = compiler.dump_assembly(allocator, frag);
+                const frag: Glslc.Compiler.Code = .{ .path = .{
+                    .main = "./shaders/frag.glsl",
+                    .include = &[_][]const u8{config.paths.playground},
+                    .definitions = definitions.items,
+                } };
+                if (render_config.shader_dump_assembly) {
+                    compiler.dump_assembly(allocator, &frag) catch {};
+                }
                 const frag_bytes = try compiler.compile(
                     allocator,
-                    &.{ .path = .{
-                        .main = "./shaders/frag.glsl",
-                        .include = &[_][]const u8{config.paths.playground},
-                        .definitions = definitions.items,
-                    } },
+                    &frag,
                     .spirv,
                 );
                 defer allocator.free(frag_bytes);
@@ -811,7 +820,7 @@ const Renderer = struct {
         binding: Binding,
         uniforms: ShadertoyUniformBuffers,
 
-        fn init(at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod) !@This() {
+        fn init(at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod) !@This() {
             const core: *mach.Core = core_mod.state();
             const device: *gpu.Device = core.device;
 
@@ -853,15 +862,15 @@ const Renderer = struct {
                 .sampler = device.createSampler(&.{}),
             };
             errdefer empty_input.release();
-            var image_pass = try ImagePass.init(at, core_mod, &channels, &binding, &empty_input);
+            var image_pass = try ImagePass.init(at, render_config, core_mod, &channels, &binding, &empty_input);
             errdefer image_pass.release();
-            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
+            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
             errdefer if (pass1) |*pass| pass.release();
-            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
+            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
             errdefer if (pass2) |*pass| pass.release();
-            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
+            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
             errdefer if (pass3) |*pass| pass.release();
-            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
+            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
             errdefer if (pass4) |*pass| pass.release();
 
             return .{
@@ -879,45 +888,45 @@ const Renderer = struct {
             };
         }
 
-        fn update(self: *@This(), at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod, ev: Shadertoy.ToyMan.UpdateEvent) !void {
+        fn update(self: *@This(), at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod, ev: Shadertoy.ToyMan.UpdateEvent) !void {
             switch (ev) {
                 .Buffer1 => {
                     var buf1 = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer1.?;
-                    const new_pass = try Pass.init(at, core_mod, &buf1, &self.channels, &self.binding, .buffer1, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf1, &self.channels, &self.binding, .buffer1, &self.pass.empty_input);
                     self.pass.buffer1 = new_pass;
                     pass.release();
                 },
                 .Buffer2 => {
                     var buf2 = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer2.?;
-                    const new_pass = try Pass.init(at, core_mod, &buf2, &self.channels, &self.binding, .buffer2, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf2, &self.channels, &self.binding, .buffer2, &self.pass.empty_input);
                     self.pass.buffer2 = new_pass;
                     pass.release();
                 },
                 .Buffer3 => {
                     var buf3 = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer3.?;
-                    const new_pass = try Pass.init(at, core_mod, &buf3, &self.channels, &self.binding, .buffer3, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf3, &self.channels, &self.binding, .buffer3, &self.pass.empty_input);
                     self.pass.buffer3 = new_pass;
                     pass.release();
                 },
                 .Buffer4 => {
                     var buf4 = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer4.?;
-                    const new_pass = try Pass.init(at, core_mod, &buf4, &self.channels, &self.binding, .buffer4, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf4, &self.channels, &self.binding, .buffer4, &self.pass.empty_input);
                     self.pass.buffer4 = new_pass;
                     pass.release();
                 },
                 .Image => {
                     var pass = self.pass.image;
-                    const new_pass = try ImagePass.init(at, core_mod, &self.channels, &self.binding, &self.pass.empty_input);
+                    const new_pass = try ImagePass.init(at, render_config, core_mod, &self.channels, &self.binding, &self.pass.empty_input);
                     self.pass.image = new_pass;
                     pass.release();
                 },
                 .All => {
                     var old_self = self.*;
-                    const new_self = try @This().init(at, core_mod);
+                    const new_self = try @This().init(at, render_config, core_mod);
                     self.* = new_self;
                     old_self.release();
                 },
@@ -990,10 +999,16 @@ const Renderer = struct {
         }
     };
 
+    const Config = struct {
+        shader_compile_opt: compile.Glslc.Compiler.Opt = .fast,
+        shader_dump_assembly: bool = false,
+    };
+
     timer: mach.Timer,
     toyman: Shadertoy.ToyMan,
     pri: PlaygroundRenderInfo,
     gpu_err_fuse: *GpuFuse,
+    config: Config = .{},
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
@@ -1009,9 +1024,11 @@ const Renderer = struct {
         var man = try Shadertoy.ToyMan.init();
         errdefer man.deinit();
 
+        const render_config: Config = .{};
+
         // TODO: this initialzation should be all from @embed() shaders
         try man.load_zhadertoy("new");
-        var pri = try PlaygroundRenderInfo.init(&man.active_toy, core_mod);
+        var pri = try PlaygroundRenderInfo.init(&man.active_toy, &render_config, core_mod);
         errdefer pri.release();
 
         const core: *mach.Core = core_mod.state();
@@ -1045,6 +1062,7 @@ const Renderer = struct {
 
             .pri = pri,
             .gpu_err_fuse = err_fuse,
+            .config = render_config,
         });
     }
 
@@ -1084,7 +1102,7 @@ const Renderer = struct {
         while (self.toyman.try_get_update()) |ev| {
             std.debug.print("updating shader: {any}\n", .{ev});
 
-            self.pri.update(&self.toyman.active_toy, core_mod, ev) catch |e| {
+            self.pri.update(&self.toyman.active_toy, &self.config, core_mod, ev) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
             _ = self.gpu_err_fuse.err_fuse.unfuse();
@@ -1301,10 +1319,8 @@ const Gui = struct {
     pub const Mod = mach.Mod(@This());
 
     title_timer: mach.Timer,
-    f: f32 = 0.0,
-    color: [3]f32 = undefined,
 
-    pub fn init(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+    fn init(self_mod: *Mod, core_mod: *mach.Core.Mod) !void {
         const core: *mach.Core = core_mod.state();
 
         imgui.setZigAllocator(&allocator_imgui);
@@ -1351,12 +1367,12 @@ const Gui = struct {
         });
     }
 
-    pub fn deinit() void {
+    fn deinit() void {
         imgui_mach.shutdown();
         imgui.destroyContext(null);
     }
 
-    pub fn tick(app_mod: *App.Mod, self_mod: *Mod) !void {
+    fn tick(app_mod: *App.Mod, self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
         const app: *App = app_mod.state();
 
@@ -1374,21 +1390,28 @@ const Gui = struct {
         }
     }
 
-    fn render(self_mod: *Mod, app_mod: *App.Mod, core_mod: *mach.Core.Mod) !void {
+    fn render(app_mod: *App.Mod, renderer_mod: *Renderer.Mod, core_mod: *mach.Core.Mod) !void {
         const core: *mach.Core = core_mod.state();
-        const self: *@This() = self_mod.state();
         const app: *App = app_mod.state();
-
-        const io = imgui.getIO();
+        const renderer: *Renderer = renderer_mod.state();
 
         imgui_mach.newFrame() catch return;
         imgui.newFrame();
 
-        imgui.text("Hello, world!");
-        _ = imgui.sliderFloat("float", &self.f, 0.0, 1.0);
-        _ = imgui.colorEdit3("color", &self.color, imgui.ColorEditFlags_None);
-        imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
-        imgui.showDemoWindow(null);
+        const io = imgui.getIO();
+
+        imgui.setNextWindowPos(.{ .x = 5, .y = 5 }, imgui.Cond_Once);
+        // imgui.setNextWindowSize(.{ .x = 400, .y = 300 }, imgui.Cond_Once);
+        imgui.setNextWindowCollapsed(true, imgui.Cond_Once);
+        if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
+            imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
+            _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
+
+            enum_checkbox(&renderer.config.shader_compile_opt);
+        }
+        imgui.end();
+
+        // imgui.showDemoWindow(null);
 
         imgui.render();
 
@@ -1405,20 +1428,40 @@ const Gui = struct {
         };
 
         const encoder = core.device.createCommandEncoder(null);
+        defer encoder.release();
+
         const render_pass_info = gpu.RenderPassDescriptor.init(.{
             .color_attachments = &.{color_attachment},
         });
-
         const pass = encoder.beginRenderPass(&render_pass_info);
+        defer pass.release();
+
         imgui_mach.renderDrawData(imgui.getDrawData().?, pass) catch {};
         pass.end();
-        pass.release();
 
         var command = encoder.finish(null);
         defer command.release();
-        encoder.release();
 
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
+    }
+
+    fn enum_checkbox(enum_ptr: anytype) void {
+        const opt_modes = comptime blk: {
+            const fields = @typeInfo(@TypeOf(enum_ptr.*)).Enum.fields;
+            var arr: [fields.len][*:0]const u8 = undefined;
+            for (fields, 0..) |field, i| {
+                arr[i] = field.name;
+            }
+            break :blk arr;
+        };
+        var opt_index: c_int = 0;
+        for (opt_modes, 0..) |mode, i| {
+            if (std.mem.eql(u8, std.mem.span(mode), @tagName(enum_ptr.*))) {
+                opt_index = @intCast(i);
+            }
+        }
+        _ = imgui.comboChar("shader compile opt mode", &opt_index, &opt_modes, 3);
+        enum_ptr.* = std.meta.stringToEnum(@TypeOf(enum_ptr.*), std.mem.span(opt_modes[@intCast(opt_index)])).?;
     }
 };
 
