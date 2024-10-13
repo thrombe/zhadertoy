@@ -1302,9 +1302,6 @@ const Renderer = struct {
                 },
                 .key_press => |ev| {
                     switch (ev.key) {
-                        .escape => {
-                            core_mod.schedule(.exit);
-                        },
                         else => {},
                     }
                 },
@@ -1393,6 +1390,14 @@ const App = struct {
         while (iter.next()) |event| {
             try self.events.append(event);
             switch (event) {
+                .key_press => |ev| {
+                    switch (ev.key) {
+                        .escape => {
+                            core_mod.schedule(.exit);
+                        },
+                        else => {},
+                    }
+                },
                 .close => core_mod.schedule(.exit),
                 else => {},
             }
