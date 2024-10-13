@@ -216,6 +216,9 @@ const Renderer = struct {
         height: u32,
         mouse_x: f32 = 0.0,
         mouse_y: f32 = 0.0,
+        mouse_left: bool = false,
+        mouse_right: bool = false,
+        mouse_middle: bool = false,
 
         padding: u64 = 0,
     };
@@ -1002,7 +1005,6 @@ const Renderer = struct {
     const Config = struct {
         shader_compile_opt: compile.Glslc.Compiler.Opt = .fast,
         shader_dump_assembly: bool = false,
-        pause_cursor: bool = false,
     };
 
     timer: mach.Timer,
@@ -1126,21 +1128,21 @@ const Renderer = struct {
         for (app.events.items) |event| {
             switch (event) {
                 .mouse_motion => |pos| {
-                    if (!self.config.pause_cursor) {
+                    if (state.mouse_left) {
                         state.mouse_x = @floatCast(pos.pos.x);
-                        state.mouse_y = @floatCast(pos.pos.y);
+                        state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - pos.pos.y);
                     }
                 },
                 .mouse_press => |button| {
                     switch (button.button) {
                         .left => {
-                            // state.mouse_left = 1;
+                            state.mouse_left = true;
                         },
                         .right => {
-                            // state.mouse_right = 1;
+                            state.mouse_right = true;
                         },
                         .middle => {
-                            // state.mouse_middle = 1;
+                            state.mouse_middle = true;
                         },
                         else => {},
                     }
@@ -1148,13 +1150,13 @@ const Renderer = struct {
                 .mouse_release => |button| {
                     switch (button.button) {
                         .left => {
-                            // state.mouse_left = 0;
+                            state.mouse_left = false;
                         },
                         .right => {
-                            // state.mouse_right = 0;
+                            state.mouse_right = false;
                         },
                         .middle => {
-                            // state.mouse_middle = 0;
+                            state.mouse_middle = false;
                         },
                         else => {},
                     }
@@ -1396,7 +1398,6 @@ const Gui = struct {
             defer imgui.end();
             if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
                 imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
-                _ = imgui.checkbox("pause cursor", &renderer.config.pause_cursor);
                 _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
 
                 enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");

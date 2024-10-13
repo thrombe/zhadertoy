@@ -23,6 +23,9 @@ struct ZhaderUniforms {
     int height;
     float mouse_x;
     float mouse_y;
+    bool mouse_left;
+    bool mouse_right;
+    bool mouse_middle;
 };
 
 layout(set = 0, binding = 0)
