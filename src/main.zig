@@ -16,6 +16,7 @@ const gpu = mach.wgpu;
 // The global list of Mach modules registered for use in our application.
 pub const modules = .{
     mach.Core,
+    // ImguiApp,
     App,
     Renderer,
 };
@@ -1219,6 +1220,149 @@ const App = struct {
 
         // NOOOO: can't poll events in multiple systems (it consumes)
         // var iter = mach.core.pollEvents();
+    }
+};
+
+const ImguiApp = struct {
+    const imgui = @import("imgui");
+    const imgui_mach = imgui.backends.mach;
+
+    var allocator_imgui = allocator;
+
+    pub const name = .app;
+    pub const systems = .{
+        .init = .{ .handler = init },
+        .deinit = .{ .handler = deinit },
+        .tick = .{ .handler = update },
+        .imgui_init = .{ .handler = imgui_init },
+        .render = .{ .handler = render },
+    };
+    pub const Mod = mach.Mod(@This());
+
+    title_timer: mach.Timer,
+    f: f32 = 0.0,
+    color: [3]f32 = undefined,
+
+    inited: bool = false,
+
+    pub fn init(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+        core_mod.schedule(.init);
+        defer core_mod.schedule(.start);
+
+        app_mod.schedule(.imgui_init);
+
+        app_mod.init(.{
+            .title_timer = try mach.Timer.start(),
+        });
+    }
+
+    pub fn imgui_init(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+        const core: *mach.Core = core_mod.state();
+        const app: *@This() = app_mod.state();
+
+        app.inited = true;
+
+        imgui.setZigAllocator(&allocator_imgui);
+        _ = imgui.createContext(null);
+        try imgui_mach.init(allocator, core.device, .{});
+
+        var io = imgui.getIO();
+        io.config_flags |= imgui.ConfigFlags_NavEnableKeyboard;
+        io.font_global_scale = 1.0 / io.display_framebuffer_scale.y;
+
+        // const font_data = @embedFile("Roboto-Medium.ttf");
+        // const size_pixels = 12 * io.display_framebuffer_scale.y;
+
+        // var font_cfg: imgui.FontConfig = std.mem.zeroes(imgui.FontConfig);
+        // font_cfg.font_data_owned_by_atlas = false;
+        // font_cfg.oversample_h = 2;
+        // font_cfg.oversample_v = 1;
+        // font_cfg.glyph_max_advance_x = std.math.floatMax(f32);
+        // font_cfg.rasterizer_multiply = 1.0;
+        // font_cfg.rasterizer_density = 1.0;
+        // font_cfg.ellipsis_char = imgui.UNICODE_CODEPOINT_MAX;
+        // _ = io.fonts.?.addFontFromMemoryTTF(@constCast(@ptrCast(font_data.ptr)), font_data.len, size_pixels, &font_cfg, null);
+    }
+
+    pub fn deinit(app_mod: *Mod) void {
+        const app: *@This() = app_mod.state();
+        _ = app;
+
+        imgui_mach.shutdown();
+        imgui.destroyContext(null);
+    }
+
+    pub fn update(app_mod: *Mod) !void {
+        const app: *@This() = app_mod.state();
+
+        var iter = mach.core.pollEvents();
+        while (iter.next()) |event| {
+            _ = imgui_mach.processEvent(event);
+
+            switch (event) {
+                .close => return error.Close,
+                else => {},
+            }
+        }
+
+        if (app.inited) {
+            app_mod.schedule(.render);
+        }
+
+        // update the window title every second
+        if (app.title_timer.read() >= 1.0) {
+            app.title_timer.reset();
+            try mach.core.printTitle("ImGui [ {d}fps ] [ Input {d}hz ]", .{
+                mach.core.frameRate(),
+                mach.core.inputRate(),
+            });
+        }
+    }
+
+    fn render(app_mod: *Mod, core_mod: *mach.Core.Mod) !void {
+        const core: *mach.Core = core_mod.state();
+        const app: *@This() = app_mod.state();
+
+        const io = imgui.getIO();
+
+        imgui_mach.newFrame() catch return;
+        imgui.newFrame();
+
+        imgui.text("Hello, world!");
+        _ = imgui.sliderFloat("float", &app.f, 0.0, 1.0);
+        _ = imgui.colorEdit3("color", &app.color, imgui.ColorEditFlags_None);
+        imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
+        imgui.showDemoWindow(null);
+
+        imgui.render();
+
+        const back_buffer_view = mach.core.swap_chain.getCurrentTextureView().?;
+        defer back_buffer_view.release();
+        const color_attachment = gpu.RenderPassColorAttachment{
+            .view = back_buffer_view,
+            .clear_value = gpu.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 },
+            .load_op = .clear,
+            .store_op = .store,
+        };
+
+        const encoder = core.device.createCommandEncoder(null);
+        const render_pass_info = gpu.RenderPassDescriptor.init(.{
+            .color_attachments = &.{color_attachment},
+        });
+
+        const pass = encoder.beginRenderPass(&render_pass_info);
+        imgui_mach.renderDrawData(imgui.getDrawData().?, pass) catch {};
+        pass.end();
+        pass.release();
+
+        var command = encoder.finish(null);
+        defer command.release();
+        encoder.release();
+
+        var queue = core.queue;
+        queue.submit(&[_]*gpu.CommandBuffer{command});
+
+        core_mod.schedule(.present_frame);
     }
 };
 

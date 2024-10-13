@@ -7,6 +7,10 @@
             .url = "https://github.com/hexops/mach/archive/refs/heads/0.4.tar.gz",
             .hash = "1220203cdb9c66998abf55c99d4c84a78f11a7d0db2992adf3840a24f2d2bb829edc",
         },
+        .zig_imgui = .{
+            .url = "https://github.com/foxnne/zig-imgui/archive/d5790495da5ec0282aa65e7eecf541f951afb44f.tar.gz",
+            .hash = "1220b58e522bd5c9995ababaf50771bab62cd9e1a3908dcb1b25ec42510770854cc1",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.

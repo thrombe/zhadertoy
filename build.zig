@@ -11,6 +11,17 @@ pub fn build(b: *std.Build) void {
     });
     const mach_module = lib_mach.module("mach");
 
+    const lib_imgui = b.dependency("zig_imgui", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const imgui_module = b.addModule("zig-imgui", .{
+        .root_source_file = lib_imgui.path("src/imgui.zig"),
+        .imports = &.{
+            .{ .name = "mach", .module = mach_module },
+        },
+    });
+
     const exe = b.addExecutable(.{
         .name = "zhadertoy",
         .root_source_file = b.path("src/main.zig"),
@@ -20,6 +31,8 @@ pub fn build(b: *std.Build) void {
     mach.addPaths(&exe.root_module);
     mach.link(lib_mach.builder, exe);
     exe.root_module.addImport("mach", mach_module);
+    exe.root_module.addImport("imgui", imgui_module);
+    exe.linkLibrary(lib_imgui.artifact("imgui"));
     exe.linkSystemLibrary("shaderc");
     exe.linkSystemLibrary("curl");
     exe.linkSystemLibrary("fswatch");
