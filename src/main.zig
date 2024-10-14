@@ -1189,19 +1189,20 @@ const Renderer = struct {
         defer encoder.release();
 
         self.pri.binding.update(encoder);
-        const resized = self.config.resize_fuse.unfuse();
-        if (resized) {
+
+        self.pri.swap();
+        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse()) {
+            self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
+        } else {
+            self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
+        }
+
+        if (self.config.resize_fuse.unfuse()) {
             self.pri.update(&self.toyman.active_toy, &self.config, core_mod, .All) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
             _ = self.gpu_err_fuse.err_fuse.unfuse();
-        }
-
-        self.pri.swap();
-        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse() or resized) {
-            self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
-        } else {
-            self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
+            _ = self.config.ignore_pause_fuse.fuse();
         }
 
         var command = encoder.finish(&.{ .label = label });
@@ -1224,6 +1225,7 @@ const Renderer = struct {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
             _ = self.gpu_err_fuse.err_fuse.unfuse();
+            _ = self.config.ignore_pause_fuse.fuse();
         }
     }
 
