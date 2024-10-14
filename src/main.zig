@@ -225,11 +225,7 @@ const Renderer = struct {
     const ShadertoyUniformBuffers = struct {
         uniforms: *Buffer(ShadertoyUniforms),
 
-        fn init(core_mod: *mach.Core.Mod) !@This() {
-            const core: *mach.Core = core_mod.state();
-            const device = core.device;
-            const height = core_mod.get(core.main_window, .height).?;
-            const width = core_mod.get(core.main_window, .width).?;
+        fn init(device: *gpu.Device, height: u32, width: u32) !@This() {
             return .{
                 .uniforms = try Buffer(ShadertoyUniforms).new(@tagName(name) ++ " uniforms", .{
                     .width = width,
@@ -318,7 +314,7 @@ const Renderer = struct {
 
                 const bind_group_layout = device.createBindGroupLayout(
                     &gpu.BindGroupLayout.Descriptor.init(.{
-                        .label = "bind grpu",
+                        .label = "screen pass bind group",
                         .entries = layout_entries.items,
                     }),
                 );
@@ -942,11 +938,11 @@ const Renderer = struct {
         binding: Binding,
         uniforms: ShadertoyUniformBuffers,
 
-        fn init(at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod) !@This() {
+        fn init(at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod, size: gpu.Extent3D) !@This() {
             const core: *mach.Core = core_mod.state();
             const device: *gpu.Device = core.device;
 
-            const uniforms = try ShadertoyUniformBuffers.init(core_mod);
+            const uniforms = try ShadertoyUniformBuffers.init(device, size.height, size.width);
 
             var binding = Binding{ .label = "fajdl;f;jda" };
             errdefer binding.deinit(allocator);
@@ -955,13 +951,6 @@ const Renderer = struct {
             // TODO:
             // try binding.init(@tagName(name), device, allocator);
 
-            const height = core_mod.get(core.main_window, .height).?;
-            const width = core_mod.get(core.main_window, .width).?;
-            const size = gpu.Extent3D{
-                .width = width,
-                .height = height,
-                .depth_or_array_layers = 1,
-            };
             var buffers = Buffers.init(device, size);
             errdefer buffers.release();
 
@@ -1031,7 +1020,11 @@ const Renderer = struct {
                 },
                 .All => {
                     var old_self = self.*;
-                    const new_self = try @This().init(at, render_config, core_mod);
+                    const size = .{
+                        .width = self.uniforms.uniforms.val.width,
+                        .height = self.uniforms.uniforms.val.height,
+                    };
+                    const new_self = try PlaygroundRenderInfo.init(at, render_config, core_mod, size);
                     self.* = new_self;
                     old_self.release();
                 },
@@ -1109,6 +1102,7 @@ const Renderer = struct {
         shader_dump_assembly: bool = false,
         pause_shader: bool = false,
         ignore_pause_fuse: Fuse = .{},
+        resize_fuse: Fuse = .{},
     };
 
     timer: mach.Timer,
@@ -1128,18 +1122,25 @@ const Renderer = struct {
         core_mod: *mach.Core.Mod,
         self_mod: *Mod,
     ) !void {
+        const core: *mach.Core = core_mod.state();
+        const device = core.device;
         var man = try Shadertoy.ToyMan.init();
         errdefer man.deinit();
 
         const render_config: Config = .{};
 
+        const height = core_mod.get(core.main_window, .height).?;
+        const width = core_mod.get(core.main_window, .width).?;
+        const size = gpu.Extent3D{
+            .width = width,
+            .height = height,
+            .depth_or_array_layers = 1,
+        };
+
         // TODO: this initialzation should be all from @embed() shaders
         try man.load_zhadertoy("new");
-        var pri = try PlaygroundRenderInfo.init(&man.active_toy, &render_config, core_mod);
+        var pri = try PlaygroundRenderInfo.init(&man.active_toy, &render_config, core_mod, size);
         errdefer pri.release();
-
-        const core: *mach.Core = core_mod.state();
-        const device = core.device;
 
         const err_fuse = try allocator.create(GpuFuse);
 
@@ -1187,11 +1188,17 @@ const Renderer = struct {
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
-        // TODO: more updates left
         self.pri.binding.update(encoder);
+        const resized = self.config.resize_fuse.unfuse();
+        if (resized) {
+            self.pri.update(&self.toyman.active_toy, &self.config, core_mod, .All) catch |e| {
+                std.debug.print("Error while updating shaders: {any}\n", .{e});
+            };
+            _ = self.gpu_err_fuse.err_fuse.unfuse();
+        }
 
         self.pri.swap();
-        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse()) {
+        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse() or resized) {
             self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
         } else {
             self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
@@ -1289,7 +1296,7 @@ const Renderer = struct {
                 .framebuffer_resize => |sze| {
                     state.width = sze.width;
                     state.height = sze.height;
-                    _ = self.config.ignore_pause_fuse.fuse();
+                    _ = self.config.resize_fuse.fuse();
                 },
                 else => {},
             }
