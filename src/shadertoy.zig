@@ -351,8 +351,8 @@ pub const ActiveToy = struct {
             }
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buffer) void {
-            if (std.meta.eql(self.typ, typ)) {
+        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
+            if (std.meta.eql(self.typ, .{ .Buf = typ })) {
                 self.from_current_frame = true;
             }
         }
@@ -365,46 +365,30 @@ pub const ActiveToy = struct {
 
         fn from(inputs: []Toy.Input, cache: *Cached) !@This() {
             var self: @This() = .{};
-            for (inputs, 1..) |input, i| {
-                switch (i) {
-                    1 => {
+            for (inputs) |input| {
+                switch (input.channel) {
+                    0 => {
                         self.input1 = try Input.from(input, cache);
                     },
-                    2 => {
+                    1 => {
                         self.input2 = try Input.from(input, cache);
                     },
-                    3 => {
+                    2 => {
                         self.input3 = try Input.from(input, cache);
                     },
-                    4 => {
+                    3 => {
                         self.input4 = try Input.from(input, cache);
                     },
-                    else => return error.TooManyInputs,
                 }
             }
             return self;
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buffer) void {
+        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
             if (self.input1) |*inp| inp.mark_current_frame_input(typ);
             if (self.input2) |*inp| inp.mark_current_frame_input(typ);
             if (self.input3) |*inp| inp.mark_current_frame_input(typ);
             if (self.input4) |*inp| inp.mark_current_frame_input(typ);
-        }
-
-        fn mark_current_frame_inputs(self: *@This(), inputs: *@This()) void {
-            if (inputs.input1) |inp| {
-                self.mark_current_frame_input(inp.typ);
-            }
-            if (inputs.input2) |inp| {
-                self.mark_current_frame_input(inp.typ);
-            }
-            if (inputs.input3) |inp| {
-                self.mark_current_frame_input(inp.typ);
-            }
-            if (inputs.input4) |inp| {
-                self.mark_current_frame_input(inp.typ);
-            }
         }
     };
     pub const BufferPass = struct {
@@ -433,33 +417,33 @@ pub const ActiveToy = struct {
     fn mark_current_frame_inputs(self: *@This()) void {
         if (self.passes.buffer1) |*buf| {
             if (self.passes.buffer2) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
             if (self.passes.buffer3) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
             if (self.passes.buffer4) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
-            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+            self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer2) |*buf| {
             if (self.passes.buffer3) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
             if (self.passes.buffer4) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
-            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+            self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer3) |*buf| {
             if (self.passes.buffer4) |*buf1| {
-                buf1.inputs.mark_current_frame_inputs(&buf.inputs);
+                buf1.inputs.mark_current_frame_input(buf.output);
             }
-            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+            self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer4) |*buf| {
-            self.passes.image.inputs.mark_current_frame_inputs(&buf.inputs);
+            self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
     }
 
