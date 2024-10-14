@@ -794,8 +794,9 @@ const Renderer = struct {
                 texture: *gpu.Texture,
                 view: *gpu.TextureView,
 
-                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format) @This() {
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
                     const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .label = "texture " ++ label,
                         .size = size,
                         .dimension = .dimension_2d,
                         .usage = .{
@@ -821,10 +822,10 @@ const Renderer = struct {
             current: Tex,
             last_frame: Tex,
 
-            fn init(device: *gpu.Device, size: gpu.Extent3D) @This() {
+            fn init(device: *gpu.Device, size: gpu.Extent3D, comptime label: [:0]const u8) @This() {
                 return .{
-                    .current = Tex.init(device, size, .rgba32_float),
-                    .last_frame = Tex.init(device, size, .rgba32_float),
+                    .current = Tex.init(device, size, .rgba32_float, "current " ++ label),
+                    .last_frame = Tex.init(device, size, .rgba32_float, "last frame " ++ label),
                 };
             }
 
@@ -842,9 +843,9 @@ const Renderer = struct {
                 tex: Channel.Tex,
                 sampler: *gpu.Sampler,
 
-                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format) @This() {
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
                     return .{
-                        .tex = Channel.Tex.init(device, size, format),
+                        .tex = Channel.Tex.init(device, size, format, label),
                         .sampler = device.createSampler(&.{}),
                     };
                 }
@@ -866,14 +867,14 @@ const Renderer = struct {
 
             fn init(device: *gpu.Device, size: gpu.Extent3D) @This() {
                 return .{
-                    .bufferA = Channel.init(device, size),
-                    .bufferB = Channel.init(device, size),
-                    .bufferC = Channel.init(device, size),
-                    .bufferD = Channel.init(device, size),
-                    .keyboard = Channel.Tex.init(device, size, .rgba8_unorm),
-                    .sound = Channel.Tex.init(device, size, .rgba8_unorm),
-                    .screen = Sampled.init(device, size, .rgba32_float),
-                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float),
+                    .bufferA = Channel.init(device, size, "buffer A"),
+                    .bufferB = Channel.init(device, size, "buffer B"),
+                    .bufferC = Channel.init(device, size, "buffer C"),
+                    .bufferD = Channel.init(device, size, "buffer D"),
+                    .keyboard = Channel.Tex.init(device, size, .rgba8_unorm, "keyboard buffer"),
+                    .sound = Channel.Tex.init(device, size, .rgba8_unorm, "sound buffer"),
+                    .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
+                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float, "empty buffer"),
                 };
             }
 
