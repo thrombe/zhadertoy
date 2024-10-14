@@ -242,6 +242,7 @@ pub const ToyMan = struct {
                         "buffer{d}.glsl",
                         .{num},
                     );
+                    defer allocator.free(name);
 
                     if (prep) {
                         var buf = try dir.createFile(name, .{});
@@ -251,10 +252,7 @@ pub const ToyMan = struct {
                     }
 
                     buffer.* = .{
-                        .output = .{
-                            .name = name,
-                            .typ = out_buf,
-                        },
+                        .output = out_buf,
                         .inputs = try ActiveToy.Inputs.from(pass.inputs, cache),
                     };
                 },
@@ -315,17 +313,15 @@ pub const ActiveToy = struct {
         BufferC = 259,
         BufferD = 260,
     };
-    pub const Buffer = struct {
-        name: []const u8,
-        typ: Buf,
-
-        fn deinit(self: *@This()) void {
-            allocator.free(self.name);
-        }
+    pub const Buffer = union(enum) {
+        Buf: Buf,
+        keyboard,
+        music,
+        texture,
     };
     pub const Sampler = Toy.Sampler;
     pub const Input = struct {
-        typ: Buf,
+        typ: Buffer,
         sampler: Sampler,
         from_current_frame: bool = false,
 
@@ -333,9 +329,20 @@ pub const ActiveToy = struct {
             switch (input.ctype) {
                 .buffer => {
                     return .{
-                        .typ = try std.meta.intToEnum(Buf, input.id),
+                        .typ = .{ .Buf = try std.meta.intToEnum(Buf, input.id) },
                         .sampler = input.sampler,
                     };
+                },
+                .texture => {
+                    var img = try cache.media_img(input.src);
+                    img.deinit();
+                    return .{ .typ = .texture, .sampler = input.sampler };
+                },
+                .keyboard => {
+                    return .{ .typ = .keyboard, .sampler = input.sampler };
+                },
+                .music => {
+                    return .{ .typ = .music, .sampler = input.sampler };
                 },
                 else => |typ| {
                     std.debug.print("did not handle ctype '{any}'\n", .{typ});
@@ -344,8 +351,8 @@ pub const ActiveToy = struct {
             }
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
-            if (self.typ == typ) {
+        fn mark_current_frame_input(self: *@This(), typ: Buffer) void {
+            if (std.meta.eql(self.typ, typ)) {
                 self.from_current_frame = true;
             }
         }
@@ -378,7 +385,7 @@ pub const ActiveToy = struct {
             return self;
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
+        fn mark_current_frame_input(self: *@This(), typ: Buffer) void {
             if (self.input1) |*inp| inp.mark_current_frame_input(typ);
             if (self.input2) |*inp| inp.mark_current_frame_input(typ);
             if (self.input3) |*inp| inp.mark_current_frame_input(typ);
@@ -401,11 +408,11 @@ pub const ActiveToy = struct {
         }
     };
     pub const BufferPass = struct {
-        output: Buffer,
+        output: Buf,
         inputs: Inputs,
 
         fn deinit(self: *@This()) void {
-            self.output.deinit();
+            _ = self;
         }
     };
 

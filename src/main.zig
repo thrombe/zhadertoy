@@ -359,16 +359,15 @@ const Renderer = struct {
                 at: *Shadertoy.ActiveToy,
                 render_config: *const Config,
                 core_mod: *mach.Core.Mod,
-                channels: *Channels,
+                channels: *Buffers,
                 binding: *Binding,
-                empty_input: *EmptyInput,
             ) !@This() {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
                 var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
                 errdefer inputs.release();
-                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, &at.passes.image.inputs, empty_input);
+                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, &at.passes.image.inputs);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
@@ -401,7 +400,7 @@ const Renderer = struct {
         };
         const Pass = struct {
             const Input = struct {
-                typ: Shadertoy.ActiveToy.Buf,
+                typ: Shadertoy.ActiveToy.Buffer,
                 sampler: *gpu.Sampler,
 
                 fn init(device: *gpu.Device, input: ?Shadertoy.ActiveToy.Input) ?@This() {
@@ -457,16 +456,15 @@ const Renderer = struct {
                 render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 pass: *Shadertoy.ActiveToy.BufferPass,
-                channels: *Channels,
+                channels: *Buffers,
                 binding: *Binding,
                 include: enum { buffer1, buffer2, buffer3, buffer4 },
-                empty_input: *EmptyInput,
             ) !@This() {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
                 var inputs = Inputs.init(device, &pass.inputs);
-                var bind = try create_bind_group(device, binding, channels, &inputs, &pass.inputs, empty_input);
+                var bind = try create_bind_group(device, binding, channels, &inputs, &pass.inputs);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
@@ -482,7 +480,7 @@ const Renderer = struct {
 
                 return .{
                     .inputs = inputs,
-                    .output = pass.output.typ,
+                    .output = pass.output,
                     .bind_group_layout = bind.layout,
                     .bind_group = .{
                         .current = bind.group1,
@@ -495,10 +493,9 @@ const Renderer = struct {
             fn create_bind_group(
                 device: *gpu.Device,
                 binding: *Binding,
-                _channels: *Channels,
+                _buffers: *Buffers,
                 _inputs: *Inputs,
                 _at_inputs: *Shadertoy.ActiveToy.Inputs,
-                empty_input: *EmptyInput,
             ) !struct { group1: *gpu.BindGroup, group2: *gpu.BindGroup, layout: *gpu.BindGroupLayout } {
                 const alloc = allocator;
                 var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
@@ -515,7 +512,6 @@ const Renderer = struct {
                 const Fn = struct {
                     layouts: @TypeOf(layout_entries),
                     groups: @TypeOf(bind_group_entries),
-                    empty: @TypeOf(empty_input),
                     alloc: @TypeOf(alloc),
 
                     const visibility = .{
@@ -541,54 +537,30 @@ const Renderer = struct {
                         try self.groups.append(self.alloc, gpu.BindGroup.Entry.sampler(@intCast(self.groups.items.len), sampler));
                     }
 
-                    fn add_all(self: *@This(), channels: *Channels, inputs: *Inputs, at_inputs: *Shadertoy.ActiveToy.Inputs, swap_tex: bool) !void {
+                    fn add_all(self: *@This(), buffers: *Buffers, inputs: *Inputs, at_inputs: *Shadertoy.ActiveToy.Inputs, swap_tex: bool) !void {
                         if (inputs.input1) |inp| {
-                            const tex = channels.get(inp.typ);
-                            var curr: *gpu.TextureView = tex.current.view;
-                            var last: *gpu.TextureView = tex.last_frame.view;
-                            if (swap_tex) {
-                                std.mem.swap(*gpu.TextureView, &curr, &last);
-                            }
-                            const view = if (at_inputs.input1.?.from_current_frame) curr else last;
-                            try self.add(view, inp.sampler);
+                            const tex = if (swap_tex != at_inputs.input1.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler);
                         } else {
-                            try self.add(self.empty.tex.view, self.empty.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
                         }
                         if (inputs.input2) |inp| {
-                            const tex = channels.get(inp.typ);
-                            var curr: *gpu.TextureView = tex.current.view;
-                            var last: *gpu.TextureView = tex.last_frame.view;
-                            if (swap_tex) {
-                                std.mem.swap(*gpu.TextureView, &curr, &last);
-                            }
-                            const view = if (at_inputs.input2.?.from_current_frame) curr else last;
-                            try self.add(view, inp.sampler);
+                            const tex = if (swap_tex != at_inputs.input2.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler);
                         } else {
-                            try self.add(self.empty.tex.view, self.empty.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
                         }
                         if (inputs.input3) |inp| {
-                            const tex = channels.get(inp.typ);
-                            var curr: *gpu.TextureView = tex.current.view;
-                            var last: *gpu.TextureView = tex.last_frame.view;
-                            if (swap_tex) {
-                                std.mem.swap(*gpu.TextureView, &curr, &last);
-                            }
-                            const view = if (at_inputs.input3.?.from_current_frame) curr else last;
-                            try self.add(view, inp.sampler);
+                            const tex = if (swap_tex != at_inputs.input3.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler);
                         } else {
-                            try self.add(self.empty.tex.view, self.empty.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
                         }
                         if (inputs.input4) |inp| {
-                            const tex = channels.get(inp.typ);
-                            var curr: *gpu.TextureView = tex.current.view;
-                            var last: *gpu.TextureView = tex.last_frame.view;
-                            if (swap_tex) {
-                                std.mem.swap(*gpu.TextureView, &curr, &last);
-                            }
-                            const view = if (at_inputs.input4.?.from_current_frame) curr else last;
-                            try self.add(view, inp.sampler);
+                            const tex = if (swap_tex != at_inputs.input4.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler);
                         } else {
-                            try self.add(self.empty.tex.view, self.empty.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
                         }
                     }
                 };
@@ -596,14 +568,13 @@ const Renderer = struct {
                 var fnn1 = Fn{
                     .layouts = try layout_entries.clone(allocator),
                     .groups = try bind_group_entries.clone(allocator),
-                    .empty = empty_input,
                     .alloc = alloc,
                 };
                 defer {
                     fnn1.layouts.deinit(alloc);
                     fnn1.groups.deinit(alloc);
                 }
-                try fnn1.add_all(_channels, _inputs, _at_inputs, false);
+                try fnn1.add_all(_buffers, _inputs, _at_inputs, false);
 
                 const bind_group_layout = device.createBindGroupLayout(
                     &gpu.BindGroupLayout.Descriptor.init(.{
@@ -622,14 +593,13 @@ const Renderer = struct {
                 var fnn2 = Fn{
                     .layouts = try layout_entries.clone(alloc),
                     .groups = try bind_group_entries.clone(alloc),
-                    .empty = empty_input,
                     .alloc = alloc,
                 };
                 defer {
                     fnn2.layouts.deinit(alloc);
                     fnn2.groups.deinit(alloc);
                 }
-                try fnn2.add_all(_channels, _inputs, _at_inputs, true);
+                try fnn2.add_all(_buffers, _inputs, _at_inputs, true);
 
                 const bind_group2 = device.createBindGroup(
                     &gpu.BindGroup.Descriptor.init(.{
@@ -867,11 +837,32 @@ const Renderer = struct {
                 self.last_frame.release();
             }
         };
-        const Channels = struct {
+        const Buffers = struct {
+            const Sampled = struct {
+                tex: Channel.Tex,
+                sampler: *gpu.Sampler,
+
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format) @This() {
+                    return .{
+                        .tex = Channel.Tex.init(device, size, format),
+                        .sampler = device.createSampler(&.{}),
+                    };
+                }
+
+                fn release(self: *@This()) void {
+                    self.tex.release();
+                    self.sampler.release();
+                }
+            };
             bufferA: Channel,
             bufferB: Channel,
             bufferC: Channel,
             bufferD: Channel,
+            keyboard: Channel.Tex,
+            sound: Channel.Tex,
+
+            screen: Sampled,
+            empty_input: Sampled,
 
             fn init(device: *gpu.Device, size: gpu.Extent3D) @This() {
                 return .{
@@ -879,6 +870,10 @@ const Renderer = struct {
                     .bufferB = Channel.init(device, size),
                     .bufferC = Channel.init(device, size),
                     .bufferD = Channel.init(device, size),
+                    .keyboard = Channel.Tex.init(device, size, .rgba8_unorm),
+                    .sound = Channel.Tex.init(device, size, .rgba8_unorm),
+                    .screen = Sampled.init(device, size, .rgba32_float),
+                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float),
                 };
             }
 
@@ -887,30 +882,49 @@ const Renderer = struct {
                 self.bufferB.release();
                 self.bufferC.release();
                 self.bufferD.release();
+                self.keyboard.release();
+                self.sound.release();
+                self.screen.release();
+                self.empty_input.release();
             }
 
-            fn get(self: *@This(), buf: Shadertoy.ActiveToy.Buf) *Channel {
+            fn get_current(self: *@This(), buf: Shadertoy.ActiveToy.Buffer) *Channel.Tex {
                 switch (buf) {
-                    .BufferA => return &self.bufferA,
-                    .BufferB => return &self.bufferB,
-                    .BufferC => return &self.bufferC,
-                    .BufferD => return &self.bufferD,
+                    .Buf => |buf1| switch (buf1) {
+                        .BufferA => return &self.bufferA.current,
+                        .BufferB => return &self.bufferB.current,
+                        .BufferC => return &self.bufferC.current,
+                        .BufferD => return &self.bufferD.current,
+                    },
+                    .keyboard => return &self.keyboard,
+                    .music => return &self.sound,
+
+                    // TODO:
+                    .texture => return &self.empty_input.tex,
                 }
             }
-            fn view(self: *@This(), buf: Shadertoy.ActiveToy.Buf) *gpu.TextureView {
-                return self.get(buf).current.view;
+
+            fn get_last_frame(self: *@This(), buf: Shadertoy.ActiveToy.Buffer) *Channel.Tex {
+                switch (buf) {
+                    .Buf => |buf1| switch (buf1) {
+                        .BufferA => return &self.bufferA.last_frame,
+                        .BufferB => return &self.bufferB.last_frame,
+                        .BufferC => return &self.bufferC.last_frame,
+                        .BufferD => return &self.bufferD.last_frame,
+                    },
+                    .keyboard => return &self.keyboard,
+                    .music => return &self.sound,
+
+                    // TODO:
+                    .texture => return &self.empty_input.tex,
+                }
+            }
+
+            fn current_view(self: *@This(), buf: Shadertoy.ActiveToy.Buf) *gpu.TextureView {
+                return self.get_current(.{ .Buf = buf }).view;
             }
         };
 
-        const EmptyInput = struct {
-            tex: Channel.Tex,
-            sampler: *gpu.Sampler,
-
-            fn release(self: *@This()) void {
-                self.sampler.release();
-                self.tex.release();
-            }
-        };
         pass: struct {
             screen: ScreenPass,
             image: ImagePass,
@@ -919,17 +933,11 @@ const Renderer = struct {
             buffer3: ?Pass,
             buffer4: ?Pass,
 
-            empty_input: EmptyInput,
-
             fn init() !@This() {
                 return .{};
             }
         },
-        screen: struct {
-            tex: Channel.Tex,
-            sampler: *gpu.Sampler,
-        },
-        channels: Channels,
+        buffers: Buffers,
         binding: Binding,
         uniforms: ShadertoyUniformBuffers,
 
@@ -953,49 +961,20 @@ const Renderer = struct {
                 .height = height,
                 .depth_or_array_layers = 1,
             };
-            var channels = Channels.init(device, size);
-            errdefer channels.release();
+            var buffers = Buffers.init(device, size);
+            errdefer buffers.release();
 
-            const empty_tex = device.createTexture(&gpu.Texture.Descriptor.init(.{
-                .size = .{
-                    .width = 1,
-                    .height = 1,
-                    .depth_or_array_layers = 1,
-                },
-                .dimension = .dimension_2d,
-                .usage = .{
-                    .texture_binding = true,
-                },
-                .format = .rgba32_float,
-            }));
-            var empty_input = EmptyInput{
-                .tex = .{
-                    .texture = empty_tex,
-                    .view = empty_tex.createView(&.{}),
-                },
-                .sampler = device.createSampler(&.{}),
-            };
-            errdefer empty_input.release();
-            var screen = .{
-                .tex = Channel.Tex.init(device, size, .rgba32_float),
-                .sampler = device.createSampler(&.{
-                    // .mag_filter = .linear,
-                    // .min_filter = .linear,
-                }),
-            };
-            errdefer screen.tex.release();
-            errdefer screen.sampler.release();
-            var screen_pass = try ScreenPass.init(render_config, core_mod, &binding, screen.tex.view, screen.sampler);
+            var screen_pass = try ScreenPass.init(render_config, core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler);
             errdefer screen_pass.release();
-            var image_pass = try ImagePass.init(at, render_config, core_mod, &channels, &binding, &empty_input);
+            var image_pass = try ImagePass.init(at, render_config, core_mod, &buffers, &binding);
             errdefer image_pass.release();
-            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer1, &empty_input) else null;
+            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer1) else null;
             errdefer if (pass1) |*pass| pass.release();
-            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer2, &empty_input) else null;
+            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer2) else null;
             errdefer if (pass2) |*pass| pass.release();
-            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer3, &empty_input) else null;
+            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer3) else null;
             errdefer if (pass3) |*pass| pass.release();
-            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, render_config, core_mod, pass, &channels, &binding, .buffer4, &empty_input) else null;
+            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer4) else null;
             errdefer if (pass4) |*pass| pass.release();
 
             return .{
@@ -1006,12 +985,10 @@ const Renderer = struct {
                     .buffer2 = pass2,
                     .buffer3 = pass3,
                     .buffer4 = pass4,
-                    .empty_input = empty_input,
                 },
-                .screen = screen,
                 .uniforms = uniforms,
                 .binding = binding,
-                .channels = channels,
+                .buffers = buffers,
             };
         }
 
@@ -1020,34 +997,34 @@ const Renderer = struct {
                 .Buffer1 => {
                     var buf1 = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer1.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf1, &self.channels, &self.binding, .buffer1, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf1, &self.buffers, &self.binding, .buffer1);
                     self.pass.buffer1 = new_pass;
                     pass.release();
                 },
                 .Buffer2 => {
                     var buf2 = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer2.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf2, &self.channels, &self.binding, .buffer2, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf2, &self.buffers, &self.binding, .buffer2);
                     self.pass.buffer2 = new_pass;
                     pass.release();
                 },
                 .Buffer3 => {
                     var buf3 = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer3.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf3, &self.channels, &self.binding, .buffer3, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf3, &self.buffers, &self.binding, .buffer3);
                     self.pass.buffer3 = new_pass;
                     pass.release();
                 },
                 .Buffer4 => {
                     var buf4 = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer4.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf4, &self.channels, &self.binding, .buffer4, &self.pass.empty_input);
+                    const new_pass = try Pass.init(at, render_config, core_mod, &buf4, &self.buffers, &self.binding, .buffer4);
                     self.pass.buffer4 = new_pass;
                     pass.release();
                 },
                 .Image => {
                     var pass = self.pass.image;
-                    const new_pass = try ImagePass.init(at, render_config, core_mod, &self.channels, &self.binding, &self.pass.empty_input);
+                    const new_pass = try ImagePass.init(at, render_config, core_mod, &self.buffers, &self.binding);
                     self.pass.image = new_pass;
                     pass.release();
                 },
@@ -1061,22 +1038,22 @@ const Renderer = struct {
         }
 
         fn swap(self: *@This()) void {
-            self.channels.bufferA.swap();
-            self.channels.bufferB.swap();
-            self.channels.bufferC.swap();
-            self.channels.bufferD.swap();
+            self.buffers.bufferA.swap();
+            self.buffers.bufferB.swap();
+            self.buffers.bufferC.swap();
+            self.buffers.bufferD.swap();
             if (self.pass.buffer1) |*buf| buf.swap();
             if (self.pass.buffer2) |*buf| buf.swap();
             if (self.pass.buffer3) |*buf| buf.swap();
             if (self.pass.buffer4) |*buf| buf.swap();
         }
 
-        fn render(self: *@This(), encoder: *gpu.CommandEncoder, screen: *gpu.TextureView) void {
-            if (self.pass.buffer1) |*buf| buf.render(encoder, self.channels.view(buf.output));
-            if (self.pass.buffer2) |*buf| buf.render(encoder, self.channels.view(buf.output));
-            if (self.pass.buffer3) |*buf| buf.render(encoder, self.channels.view(buf.output));
-            if (self.pass.buffer4) |*buf| buf.render(encoder, self.channels.view(buf.output));
-            self.pass.image.render(encoder, self.screen.tex.view);
+        fn render(self: *@This(), encoder: *gpu.CommandEncoder, screen_channel: *Channel.Tex, screen: *gpu.TextureView) void {
+            if (self.pass.buffer1) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
+            if (self.pass.buffer2) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
+            if (self.pass.buffer3) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
+            if (self.pass.buffer4) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
+            self.pass.image.render(encoder, screen_channel.view);
             self.pass.screen.render(encoder, screen);
         }
 
@@ -1087,10 +1064,8 @@ const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.release();
             if (self.pass.buffer3) |*buf| buf.release();
             if (self.pass.buffer4) |*buf| buf.release();
-            self.pass.empty_input.tex.release();
-            self.pass.empty_input.sampler.release();
 
-            self.channels.release();
+            self.buffers.release();
             self.binding.deinit(allocator);
 
             // NOTE: not needed. this is deinited in binding
@@ -1216,7 +1191,7 @@ const Renderer = struct {
 
         self.pri.swap();
         if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse()) {
-            self.pri.render(encoder, app.rendering_data.?.screen);
+            self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
         } else {
             self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
         }
