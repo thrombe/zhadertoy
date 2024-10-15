@@ -1564,6 +1564,7 @@ const Gui = struct {
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
     }
 
+    var input_buf = std.mem.zeroes([256:0]u8);
     var pick_toy_index: c_int = 0;
     fn pick_toy(renderer: *Renderer) !void {
         const toys = [_][*:0]const u8{
@@ -1577,6 +1578,8 @@ const Gui = struct {
             "s:MdX3Rr: iq 3d noise mountain",
             "s:WlKXzm: satellite thing",
             "s:43lfRB: cool blue 3d fractal",
+            "s:7slfWX: uninitialized vars",
+            "s:WdyGzy: idk. broken",
         };
         imgui.setNextItemWidth(200);
         _ = imgui.comboChar("shadertoy", &pick_toy_index, &toys, toys.len);
@@ -1593,6 +1596,13 @@ const Gui = struct {
                 },
                 else => return error.UnknownTypeOfToy,
             }
+        }
+
+        imgui.setNextItemWidth(200);
+        const enter = imgui.inputText("shadertoy id", &input_buf, input_buf.len, imgui.InputTextFlags_CharsNoBlank | imgui.InputTextFlags_EnterReturnsTrue);
+        imgui.sameLine();
+        if (enter or imgui.button("load")) {
+            try renderer.toyman.load_shadertoy(std.mem.span(@as([*:0]u8, @ptrCast(&input_buf))));
         }
     }
 
@@ -1611,6 +1621,7 @@ const Gui = struct {
                 opt_index = @intCast(i);
             }
         }
+        imgui.setNextItemWidth(200);
         _ = imgui.comboChar(title, &opt_index, &opt_modes, opt_modes.len);
         enum_ptr.* = std.meta.stringToEnum(@TypeOf(enum_ptr.*), std.mem.span(opt_modes[@intCast(opt_index)])).?;
     }
