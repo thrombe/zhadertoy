@@ -2,6 +2,8 @@ const std = @import("std");
 const main = @import("main.zig");
 const allocator = main.allocator;
 
+const utils = @import("utils.zig");
+
 pub const Glslc = struct {
     pub fn testfn() !void {
         const compiler = Compiler{
@@ -50,17 +52,32 @@ pub const Glslc = struct {
             },
         };
 
-        pub fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: *const Code) !void {
-            // std.debug.print("{s}\n", .{code});
-            const bytes = try self.compile(alloc, code, .assembly);
-            defer alloc.free(bytes);
-            std.debug.print("{s}\n", .{bytes});
+        pub const Err = error{
+            GlslcErroredOut,
+        };
+        pub fn CompileResult(out: OutputType) type {
+            return utils.Result(switch (out) {
+                .spirv => []u32,
+                .assembly => []u8,
+            }, Err);
         }
 
-        pub fn compile(self: @This(), alloc: std.mem.Allocator, code: *const Code, comptime output_type: OutputType) !(switch (output_type) {
-            .spirv => []u32,
-            .assembly => []u8,
-        }) {
+        pub fn dump_assembly(self: @This(), alloc: std.mem.Allocator, code: *const Code) !utils.Result(void, Err) {
+            // std.debug.print("{s}\n", .{code});
+            const res = try self.compile(alloc, code, .assembly);
+            switch (res) {
+                .Ok => |bytes| {
+                    defer alloc.free(bytes);
+                    std.debug.print("{s}\n", .{bytes});
+                    return .Ok;
+                },
+                .Err => |err| {
+                    return .{ .Err = err };
+                },
+            }
+        }
+
+        pub fn compile(self: @This(), alloc: std.mem.Allocator, code: *const Code, comptime output_type: OutputType) !CompileResult(output_type) {
             var args = std.ArrayList([]const u8).init(alloc);
             defer {
                 for (args.items) |arg| {
@@ -137,10 +154,6 @@ pub const Glslc = struct {
                 .stderr = stderr,
             });
             defer poller.deinit();
-            errdefer {
-                const fifo = poller.fifo(.stderr);
-                std.debug.print("{s}\n", .{fifo.buf[fifo.head..][0..fifo.count]});
-            }
 
             while (try poller.poll()) {
                 if (poller.fifo(.stdout).count > max_output_bytes)
@@ -150,30 +163,44 @@ pub const Glslc = struct {
             }
 
             const err = try child.wait();
-            switch (err) {
-                .Exited => |e| {
-                    if (e != 0) {
-                        std.debug.print("exited with code: {}\n", .{e});
-                        return error.GlslcErroredOut;
-                    }
-                },
-                // .Signal => |code| {},
-                // .Stopped => |code| {},
-                // .Unknown => |code| {},
-                else => |e| {
-                    std.debug.print("exited with code: {}\n", .{e});
-                    return error.GlslcErroredOut;
-                },
+            blk: {
+                var err_buf = std.ArrayList(u8).init(alloc);
+
+                switch (err) {
+                    .Exited => |e| {
+                        if (e != 0) {
+                            _ = try err_buf.writer().print("exited with code: {}\n", .{e});
+                        } else {
+                            err_buf.deinit();
+                            break :blk;
+                        }
+                    },
+                    // .Signal => |code| {},
+                    // .Stopped => |code| {},
+                    // .Unknown => |code| {},
+                    else => |e| {
+                        try err_buf.writer().print("exited with code: {}\n", .{e});
+                    },
+                }
+
+                const fifo = poller.fifo(.stderr);
+                try err_buf.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
+                return .{
+                    .Err = .{
+                        .err = Err.GlslcErroredOut,
+                        .msg = try err_buf.toOwnedSlice(),
+                    },
+                };
             }
 
             const fifo = poller.fifo(.stdout);
             var aligned = std.ArrayListAligned(u8, 4).init(allocator);
             try aligned.appendSlice(fifo.buf[fifo.head..][0..fifo.count]);
             const bytes = try aligned.toOwnedSlice();
-            return switch (output_type) {
+            return .{ .Ok = switch (output_type) {
                 .spirv => std.mem.bytesAsSlice(u32, bytes),
                 .assembly => bytes,
-            };
+            } };
         }
     };
 };

@@ -672,11 +672,23 @@ const Renderer = struct {
                 // if (render_config.shader_dump_assembly) {
                 //     _ = compiler.dump_assembly(allocator, &vert);
                 // }
-                const vertex_bytes = try compiler.compile(
-                    allocator,
-                    &vert,
-                    .spirv,
-                );
+                const vertex_bytes = blk: {
+                    const res = try compiler.compile(
+                        allocator,
+                        &vert,
+                        .spirv,
+                    );
+                    switch (res) {
+                        .Ok => |ok| {
+                            try render_config.gpu_err_fuse.err_channel.send(null);
+                            break :blk ok;
+                        },
+                        .Err => |msg| {
+                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
+                            return msg.err;
+                        },
+                    }
+                };
                 defer allocator.free(vertex_bytes);
                 const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
                     .next_in_chain = .{ .spirv_descriptor = &.{
@@ -693,14 +705,38 @@ const Renderer = struct {
                     .include = &[_][]const u8{config.paths.playground},
                     .definitions = definitions.items,
                 } };
-                if (render_config.shader_dump_assembly) {
-                    compiler.dump_assembly(allocator, &frag) catch {};
+                if (render_config.shader_dump_assembly) blk: {
+                    // TODO: print this on screen instead of console
+                    const res = compiler.dump_assembly(allocator, &frag) catch {
+                        break :blk;
+                    };
+                    switch (res) {
+                        .Err => |msg| {
+                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
+                            return msg.err;
+                        },
+                        .Ok => {
+                            try render_config.gpu_err_fuse.err_channel.send(null);
+                        },
+                    }
                 }
-                const frag_bytes = try compiler.compile(
-                    allocator,
-                    &frag,
-                    .spirv,
-                );
+                const frag_bytes = blk: {
+                    const res = try compiler.compile(
+                        allocator,
+                        &frag,
+                        .spirv,
+                    );
+                    switch (res) {
+                        .Ok => |ok| {
+                            try render_config.gpu_err_fuse.err_channel.send(null);
+                            break :blk ok;
+                        },
+                        .Err => |msg| {
+                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
+                            return msg.err;
+                        },
+                    }
+                };
                 defer allocator.free(frag_bytes);
                 const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
                     .next_in_chain = .{ .spirv_descriptor = &.{
@@ -1078,12 +1114,27 @@ const Renderer = struct {
         const tick_threshold = 10;
         ticks: std.atomic.Value(u32),
         err_fuse: Fuse,
+        err_channel: utils.Channel(?[]const u8),
 
-        fn tick(self: *@This()) void {
+        fn init(alloc: std.mem.Allocator) !*@This() {
+            const self = try alloc.create(@This());
+            self.* = .{
+                .ticks = std.atomic.Value(u32).init(0),
+                .err_fuse = .{},
+                .err_channel = try utils.Channel(?[]const u8).init(alloc),
+            };
+            return self;
+        }
+
+        fn tick(self: *@This()) !void {
             _ = self.ticks.fetchAdd(1, .acq_rel);
             const ticks = self.ticks.fetchMin(tick_threshold, .acq_rel);
             if (ticks >= tick_threshold) {
-                _ = self.err_fuse.unfuse();
+                const was_fused = self.err_fuse.unfuse();
+
+                if (was_fused) {
+                    try self.err_channel.send(null);
+                }
             }
         }
 
@@ -1095,6 +1146,17 @@ const Renderer = struct {
         fn check(self: *@This()) bool {
             return self.err_fuse.check();
         }
+
+        fn deinit(self: *@This()) void {
+            const alloc = self.err_channel.pinned.dq.allocator;
+            while (self.err_channel.try_recv()) |msg| {
+                if (msg) |nonull| {
+                    alloc.free(nonull);
+                }
+            }
+            self.err_channel.deinit();
+            alloc.destroy(self);
+        }
     };
 
     const Config = struct {
@@ -1103,19 +1165,19 @@ const Renderer = struct {
         pause_shader: bool = false,
         ignore_pause_fuse: Fuse = .{},
         resize_fuse: Fuse = .{},
+        gpu_err_fuse: *GpuFuse,
     };
 
     timer: mach.Timer,
     toyman: Shadertoy.ToyMan,
     pri: PlaygroundRenderInfo,
-    gpu_err_fuse: *GpuFuse,
-    config: Config = .{},
+    config: Config,
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
         self.toyman.deinit();
         self.pri.release();
-        allocator.destroy(self.gpu_err_fuse);
+        self.config.gpu_err_fuse.deinit();
     }
 
     fn init(
@@ -1127,7 +1189,9 @@ const Renderer = struct {
         var man = try Shadertoy.ToyMan.init();
         errdefer man.deinit();
 
-        const render_config: Config = .{};
+        const render_config: Config = .{
+            .gpu_err_fuse = try GpuFuse.init(allocator),
+        };
 
         const height = core_mod.get(core.main_window, .height).?;
         const width = core_mod.get(core.main_window, .width).?;
@@ -1142,10 +1206,8 @@ const Renderer = struct {
         var pri = try PlaygroundRenderInfo.init(&man.active_toy, &render_config, core_mod, size);
         errdefer pri.release();
 
-        const err_fuse = try allocator.create(GpuFuse);
-
         // - [machengine.org/content/engine/gpu/errors.md](https://github.com/hexops/machengine.org/blob/e10e4245c4c1de7fe9e4882e378a86d42eb1035a/content/engine/gpu/errors.md)
-        device.setUncapturedErrorCallback(err_fuse, struct {
+        device.setUncapturedErrorCallback(render_config.gpu_err_fuse, struct {
             inline fn callback(ctx: *GpuFuse, typ: gpu.ErrorType, message: [*:0]const u8) void {
                 switch (typ) {
                     .no_error => return,
@@ -1159,7 +1221,14 @@ const Renderer = struct {
                 }
 
                 if (!ctx.fuse()) {
-                    std.debug.print("Gpu Validation Error: {s}\n", .{message});
+                    const msg = std.fmt.allocPrint(ctx.err_channel.pinned.dq.allocator, "Gpu Validation Error: {s}\n", .{message}) catch |err| {
+                        std.debug.print("Fatal Error: {any}\n", .{err});
+                        std.process.exit(1);
+                    };
+                    ctx.err_channel.send(msg) catch |err| {
+                        std.debug.print("Fatal Error: {any}\n", .{err});
+                        std.process.exit(1);
+                    };
                 }
             }
         }.callback);
@@ -1169,7 +1238,6 @@ const Renderer = struct {
             .toyman = man,
 
             .pri = pri,
-            .gpu_err_fuse = err_fuse,
             .config = render_config,
         });
     }
@@ -1201,7 +1269,7 @@ const Renderer = struct {
             self.pri.update(&self.toyman.active_toy, &self.config, core_mod, .All) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
-            _ = self.gpu_err_fuse.err_fuse.unfuse();
+            _ = self.config.gpu_err_fuse.err_fuse.unfuse();
             _ = self.config.ignore_pause_fuse.fuse();
         }
 
@@ -1209,7 +1277,7 @@ const Renderer = struct {
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
-        self.gpu_err_fuse.tick();
+        try self.config.gpu_err_fuse.tick();
     }
 
     fn update_shaders(
@@ -1224,7 +1292,7 @@ const Renderer = struct {
             self.pri.update(&self.toyman.active_toy, &self.config, core_mod, ev) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
-            _ = self.gpu_err_fuse.err_fuse.unfuse();
+            _ = self.config.gpu_err_fuse.err_fuse.unfuse();
             _ = self.config.ignore_pause_fuse.fuse();
         }
     }
@@ -1505,6 +1573,7 @@ const Gui = struct {
         }
     }
 
+    var error_msg_buf = std.mem.zeroes([1024:0]u8);
     fn render(app_mod: *App.Mod, renderer_mod: *Renderer.Mod, core_mod: *mach.Core.Mod) !void {
         const core: *mach.Core = core_mod.state();
         const app: *App = app_mod.state();
@@ -1530,6 +1599,18 @@ const Gui = struct {
                 enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
                 pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
             }
+
+            while (renderer.config.gpu_err_fuse.err_channel.try_recv()) |err| {
+                if (err) |msg| {
+                    defer renderer.config.gpu_err_fuse.err_channel.pinned.dq.allocator.free(msg);
+                    std.debug.print("{s}", .{msg});
+                    std.mem.copyForwards(u8, &error_msg_buf, msg[0..@min(msg.len, error_msg_buf.len - 1)]);
+                    error_msg_buf[@min(msg.len, error_msg_buf.len - 1)] = 0;
+                } else {
+                    error_msg_buf[0] = 0;
+                }
+            }
+            imgui.textWrapped("%s", &error_msg_buf);
 
             // imgui.showDemoWindow(null);
         }

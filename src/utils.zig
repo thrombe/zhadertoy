@@ -64,6 +64,42 @@ pub const JsonHelpers = struct {
     }
 };
 
+// assumes ok has ok.deinit()
+pub fn Result(ok: type, err_typ: type) type {
+    return union(enum) {
+        Ok: ok,
+        Err: Error,
+
+        pub const Error = struct {
+            err: err_typ,
+            msg: []u8,
+
+            // pub fn owned(err: err_typ, msg: []const u8) !@This() {
+            //     return .{
+            //         .err = err,
+            //         .msg = try allocator.dupe(u8, msg),
+            //     };
+            // }
+            // pub fn deinit(self: *@This()) void {
+            //     allocator.free(self.msg);
+            // }
+        };
+
+        // pub fn deinit(self: *@This()) void {
+        //     switch (self) {
+        //         .Ok => |res| {
+        //             if (std.meta.hasMethod(ok, "deinit")) {
+        //                 res.deinit();
+        //             }
+        //         },
+        //         .Err => |err| {
+        //             err.deinit();
+        //         },
+        //     }
+        // }
+    };
+}
+
 pub fn Deque(typ: type) type {
     return struct {
         allocator: std.mem.Allocator,
