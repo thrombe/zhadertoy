@@ -739,10 +739,20 @@ const Renderer = struct {
                 };
                 defer allocator.free(frag_bytes);
                 const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
-                    .next_in_chain = .{ .spirv_descriptor = &.{
-                        .code_size = @intCast(frag_bytes.len),
-                        .code = frag_bytes.ptr,
-                    } },
+                    .next_in_chain = .{
+                        .spirv_descriptor = &.{
+                            .code_size = @intCast(frag_bytes.len),
+                            .code = frag_bytes.ptr,
+                            .chain = .{
+                                // - [WebGPU Shading Language](https://www.w3.org/TR/WGSL/#uniformity)
+                                // - [Designing a uniformity opt-out (similar thing exists in dawn :})](https://github.com/gpuweb/gpuweb/issues/3554)
+                                .next = @ptrCast(&gpu.dawn.ShaderModuleSPIRVOptionsDescriptor{
+                                    .allow_non_uniform_derivatives = .true,
+                                }),
+                                .s_type = .shader_module_spirv_descriptor,
+                            },
+                        },
+                    },
                     .label = "frag.glsl",
                 });
                 defer frag_shader_module.release();
