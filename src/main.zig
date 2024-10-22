@@ -1527,11 +1527,26 @@ const Gui = struct {
             defer imgui.end();
             if (imgui.begin("SIKE!", null, imgui.WindowFlags_None)) {
                 imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
-                _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
-                _ = imgui.checkbox("pause shader", &renderer.config.pause_shader);
+                if (imgui.collapsingHeader("shader compilation", imgui.TreeNodeFlags_None)) {
+                    _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
+                    _ = imgui.checkbox("pause shader", &renderer.config.pause_shader);
 
-                enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
-                pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
+                    enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
+                }
+
+                if (imgui.collapsingHeader("toys", imgui.TreeNodeFlags_DefaultOpen)) {
+                    pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
+                }
+
+                if (imgui.collapsingHeader("uniforms", imgui.TreeNodeFlags_DefaultOpen)) {
+                    if (imgui.button("reset uniforms")) {
+                        renderer.pri.uniforms.uniforms.val.reset_state();
+                    }
+                    const val = renderer.pri.uniforms.uniforms.val;
+                    imgui.text("frame: %d time: %.1fs delta: %.3fs", val.frame, val.time, val.time_delta);
+                    imgui.text("mouse_x: %.3f mouse_y: %.3f", val.mouse_x, val.mouse_y);
+                    imgui.text("width: %d height: %d", val.width, val.height);
+                }
             }
 
             while (renderer.config.gpu_err_fuse.err_channel.try_recv()) |err| {
@@ -1544,7 +1559,9 @@ const Gui = struct {
                     error_msg_buf[0] = 0;
                 }
             }
-            imgui.textWrapped("%s", &error_msg_buf);
+            if (imgui.collapsingHeader("errors", imgui.TreeNodeFlags_DefaultOpen)) {
+                imgui.textWrapped("%s", &error_msg_buf);
+            }
 
             // imgui.showDemoWindow(null);
         }
