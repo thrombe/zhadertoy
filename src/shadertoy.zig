@@ -6,6 +6,9 @@ const FsFuse = utils.FsFuse;
 const Fuse = utils.Fuse;
 const Curl = utils.Curl;
 
+const compile = @import("compile.zig");
+const Glslc = compile.Glslc;
+
 const main = @import("main.zig");
 const allocator = main.allocator;
 const config = main.config;
@@ -56,11 +59,350 @@ pub fn testfn1() !void {
 }
 
 pub const ToyMan = struct {
-    // path where the toy should be simlinked
-    playground: []const u8,
-    shader_fuse: FsFuse,
-    shader_cache: Cached,
-    active_toy: ActiveToy,
+    pub const ShaderInclude = enum {
+        screen,
+        image,
+        buffer1,
+        buffer2,
+        buffer3,
+        buffer4,
+    };
+    pub const CompiledShader = struct {
+        vert: []u32,
+        frag: []u32,
+
+        pub fn deinit(self: *@This()) void {
+            allocator.free(self.frag);
+
+            // NOTE: this is owned by the compiler
+            // allocator.free(self.vert);
+        }
+    };
+    pub const CompileEventTag = std.meta.Tag(CompileEvent);
+    pub const CompileEvent = union(enum) {
+        Screen: CompiledShader,
+        Image: CompiledShader,
+        Buffer1: CompiledShader,
+        Buffer2: CompiledShader,
+        Buffer3: CompiledShader,
+        Buffer4: CompiledShader,
+
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                inline else => |*val| val.deinit(),
+            }
+        }
+    };
+    pub const Compiler = struct {
+        const EventChan = utils.Channel(CompileEvent);
+        const ToyChan = utils.Channel(ActiveToy);
+        const Ctx = struct {
+            config: *main.Renderer.Config,
+            shader_fuse: *FsFuse,
+
+            exit: Fuse = .{},
+            toy_chan: ToyChan,
+            channel: EventChan,
+            vert: []u32,
+
+            fn try_get_update(self: *@This()) ?UpdateEvent {
+                while (self.shader_fuse.try_recv()) |ev| {
+                    switch (ev) {
+                        .All => {
+                            return .All;
+                        },
+                        .File => |path| {
+                            defer allocator.free(path);
+                            if (std.mem.eql(u8, path, "buffer1.glsl")) {
+                                return .Buffer1;
+                            }
+                            if (std.mem.eql(u8, path, "buffer2.glsl")) {
+                                return .Buffer2;
+                            }
+                            if (std.mem.eql(u8, path, "buffer3.glsl")) {
+                                return .Buffer3;
+                            }
+                            if (std.mem.eql(u8, path, "buffer4.glsl")) {
+                                return .Buffer4;
+                            }
+                            if (std.mem.eql(u8, path, "image.glsl")) {
+                                return .Image;
+                            }
+                            if (std.mem.eql(u8, path, "common.glsl")) {
+                                return .All;
+                            }
+                            if (std.mem.eql(u8, path, "toy.json")) {
+                                return .All;
+                            }
+                            if (std.mem.eql(u8, path, "frag.glsl")) {
+                                return .All;
+                            }
+                            if (std.mem.eql(u8, path, "vert.glsl")) {
+                                return .All;
+                            }
+                            std.debug.print("Unknown file update: {s}\n", .{path});
+                        },
+                    }
+                }
+                return null;
+            }
+
+            fn compile_and_send(self: *@This(), ev: CompileEventTag, has_common: bool) void {
+                const shader = self.compile(ev, has_common) catch |e| {
+                    std.debug.print("{any}\n", .{e});
+                    return;
+                };
+                const event: CompileEvent = switch (ev) {
+                    .Screen => .{ .Screen = shader },
+                    .Image => .{ .Image = shader },
+                    .Buffer1 => .{ .Buffer1 = shader },
+                    .Buffer2 => .{ .Buffer2 = shader },
+                    .Buffer3 => .{ .Buffer3 = shader },
+                    .Buffer4 => .{ .Buffer4 = shader },
+                };
+                self.channel.send(event) catch unreachable;
+            }
+
+            fn handle_update_blocked(self: *@This(), e: UpdateEvent, at: *ActiveToy) void {
+                switch (e) {
+                    .Buffer1 => {
+                        self.compile_and_send(.Buffer1, at.has_common);
+                    },
+                    .Buffer2 => {
+                        self.compile_and_send(.Buffer2, at.has_common);
+                    },
+                    .Buffer3 => {
+                        self.compile_and_send(.Buffer3, at.has_common);
+                    },
+                    .Buffer4 => {
+                        self.compile_and_send(.Buffer4, at.has_common);
+                    },
+                    .Image => {
+                        self.compile_and_send(.Image, at.has_common);
+                    },
+                    .All => {
+                        if (at.passes.buffer1) |_| self.compile_and_send(.Buffer1, at.has_common);
+                        if (at.passes.buffer2) |_| self.compile_and_send(.Buffer2, at.has_common);
+                        if (at.passes.buffer3) |_| self.compile_and_send(.Buffer3, at.has_common);
+                        if (at.passes.buffer4) |_| self.compile_and_send(.Buffer4, at.has_common);
+                        self.compile_and_send(.Image, at.has_common);
+                        self.compile_and_send(.Screen, at.has_common);
+                    },
+                }
+            }
+
+            pub fn reload_all(self: *@This()) !void {
+                try self.shader_fuse.ctx.channel.send(.All);
+            }
+
+            pub fn compile(self: *@This(), ev: CompileEventTag, has_common: bool) !CompiledShader {
+                return .{
+                    .vert = self.vert,
+                    .frag = try compile_frag(self.config, has_common, switch (ev) {
+                        .Screen => .screen,
+                        .Image => .image,
+                        .Buffer1 => .buffer1,
+                        .Buffer2 => .buffer2,
+                        .Buffer3 => .buffer3,
+                        .Buffer4 => .buffer4,
+                    }),
+                };
+            }
+
+            fn deinit(self: *@This()) void {
+                while (self.channel.try_recv()) |ev_| {
+                    var ev = ev_;
+                    ev.deinit();
+                }
+                self.channel.deinit();
+                self.toy_chan.deinit();
+                allocator.free(self.vert);
+
+                // NOTE: not owned
+                // self.config
+                // self.shader_fuse
+            }
+        };
+        ctx: *Ctx,
+        thread: std.Thread,
+
+        pub fn init(render_config: *main.Renderer.Config, shader_fuse: *FsFuse) !@This() {
+            var chan = try EventChan.init(allocator);
+            errdefer chan.deinit();
+            var toy_chan = try ToyChan.init(allocator);
+            errdefer toy_chan.deinit();
+            const vert = try compile_vert(render_config);
+            errdefer allocator.free(vert);
+
+            const ctxt = try allocator.create(Ctx);
+            errdefer allocator.destroy(ctxt);
+            ctxt.* = .{
+                .toy_chan = toy_chan,
+                .config = render_config,
+                .shader_fuse = shader_fuse,
+                .channel = chan,
+                .vert = vert,
+            };
+            errdefer ctxt.deinit();
+
+            const Callbacks = struct {
+                fn spawn(ctx: *Ctx) void {
+                    var at = ActiveToy{};
+                    defer at.deinit();
+
+                    while (true) {
+                        if (ctx.exit.unfuse()) {
+                            break;
+                        }
+                        while (ctx.toy_chan.try_recv()) |toy| {
+                            at.deinit();
+                            at = toy;
+                        }
+                        while (ctx.try_get_update()) |e| ctx.handle_update_blocked(e, &at);
+
+                        std.time.sleep(std.time.ns_per_ms * 100);
+                    }
+                }
+            };
+            const thread = try std.Thread.spawn(.{ .allocator = allocator }, Callbacks.spawn, .{ctxt});
+
+            return .{
+                .ctx = ctxt,
+                .thread = thread,
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            _ = self.ctx.exit.fuse();
+            self.thread.join();
+            self.ctx.deinit();
+            allocator.destroy(self.ctx);
+        }
+
+        fn compile_vert(
+            render_config: *const main.Renderer.Config,
+        ) ![]u32 {
+            var compiler = Glslc.Compiler{ .opt = render_config.shader_compile_opt };
+            compiler.stage = .vertex;
+            const vert: Glslc.Compiler.Code = .{ .path = .{
+                .main = "./shaders/vert.glsl",
+                .include = &[_][]const u8{config.paths.playground},
+                .definitions = &[_][]const u8{},
+            } };
+            // if (render_config.shader_dump_assembly) {
+            //     _ = compiler.dump_assembly(allocator, &vert);
+            // }
+            const vertex_bytes = blk: {
+                const res = try compiler.compile(
+                    allocator,
+                    &vert,
+                    .spirv,
+                );
+                switch (res) {
+                    .Err => |msg| {
+                        try render_config.gpu_err_fuse.err_channel.send(msg.msg);
+                        return msg.err;
+                    },
+                    .Ok => |ok| {
+                        errdefer allocator.free(ok);
+                        try render_config.gpu_err_fuse.err_channel.send(null);
+                        break :blk ok;
+                    },
+                }
+            };
+            return vertex_bytes;
+        }
+
+        fn compile_frag(
+            render_config: *const main.Renderer.Config,
+            has_common: bool,
+            include: ShaderInclude,
+        ) ![]u32 {
+            var definitions = std.ArrayList([]const u8).init(allocator);
+            defer {
+                for (definitions.items) |def| {
+                    allocator.free(def);
+                }
+                definitions.deinit();
+            }
+            if (has_common) {
+                try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
+            }
+
+            // NOTE: webgpu does not have a simple way to flip texture without copying it.
+            // shadertoy's buffer inputs always have vflip = true
+            // on shadertoy, texture fetches have y coord flipped compared to webgpu
+            // this hack just flips the y coord on buffer's mainImage fragCoord param. might fail if shadertoy
+            //  buffer vflip = false
+            switch (include) {
+                .image => {},
+                .screen, .buffer1, .buffer2, .buffer3, .buffer4 => {
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_VFLIP"));
+                },
+            }
+
+            switch (include) {
+                .screen => {},
+                .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
+                },
+            }
+
+            try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (include) {
+                .screen => "SCREEN",
+                .image => "IMAGE",
+                .buffer1 => "BUF1",
+                .buffer2 => "BUF2",
+                .buffer3 => "BUF3",
+                .buffer4 => "BUF4",
+            }}));
+
+            var compiler = Glslc.Compiler{ .opt = render_config.shader_compile_opt };
+            compiler.stage = .fragment;
+            const frag: Glslc.Compiler.Code = .{ .path = .{
+                .main = "./shaders/frag.glsl",
+                .include = &[_][]const u8{config.paths.playground},
+                .definitions = definitions.items,
+            } };
+            if (render_config.shader_dump_assembly) blk: {
+                // TODO: print this on screen instead of console
+                const res = compiler.dump_assembly(allocator, &frag) catch {
+                    break :blk;
+                };
+                switch (res) {
+                    .Err => |err| {
+                        try render_config.gpu_err_fuse.err_channel.send(err.msg);
+                        return err.err;
+                    },
+                    .Ok => {
+                        try render_config.gpu_err_fuse.err_channel.send(null);
+                    },
+                }
+            }
+            const frag_bytes = blk: {
+                const res = try compiler.compile(
+                    allocator,
+                    &frag,
+                    .spirv,
+                );
+                switch (res) {
+                    .Err => |err| {
+                        try render_config.gpu_err_fuse.err_channel.send(err.msg);
+                        return err.err;
+                    },
+                    .Ok => |ok| {
+                        errdefer allocator.free(ok);
+                        try render_config.gpu_err_fuse.err_channel.send(null);
+                        break :blk ok;
+                    },
+                }
+            };
+            return frag_bytes;
+        }
+    };
 
     pub const UpdateEvent = enum {
         Buffer1,
@@ -71,78 +413,61 @@ pub const ToyMan = struct {
         All,
     };
 
+    // path where the toy should be simlinked
+    playground: []const u8,
+    shader_fuse: *FsFuse,
+    shader_cache: Cached,
+    active_toy: *ActiveToy,
+    compiler: Compiler,
+
     const vert_glsl = @embedFile("./vert.glsl");
     const frag_glsl = @embedFile("./frag.glsl");
 
-    pub fn init() !@This() {
+    pub fn init(render_config: *main.Renderer.Config) !@This() {
         const cwd_real = try std.fs.cwd().realpathAlloc(allocator, "./");
         defer allocator.free(cwd_real);
         const playground = try std.fs.path.join(allocator, &[_][]const u8{ cwd_real, "shaders" });
 
-        const fuse = try FsFuse.init(config.paths.playground);
+        var fuse = try allocator.create(FsFuse);
+        errdefer allocator.destroy(fuse);
+        fuse.* = try FsFuse.init(config.paths.playground);
+        errdefer fuse.deinit();
         // TODO: fuse() + default self.active_toy won't work cuz of things like has_common
         try fuse.ctx.channel.send(.All);
-        const cache = try Cached.init(config.paths.shadertoys);
+        var cache = try Cached.init(config.paths.shadertoys);
+        errdefer cache.deinit();
+
+        const at = try allocator.create(ActiveToy);
+        at.* = .{};
+        errdefer allocator.destroy(at);
+
+        const compiler = try Compiler.init(render_config, fuse);
 
         return .{
             .playground = playground,
             .shader_fuse = fuse,
             .shader_cache = cache,
-            .active_toy = .{},
+            .active_toy = at,
+            .compiler = compiler,
         };
     }
 
     pub fn deinit(self: *@This()) void {
+        self.compiler.deinit();
         self.shader_fuse.deinit();
         self.shader_cache.deinit();
         self.active_toy.deinit();
+        allocator.destroy(self.active_toy);
         allocator.free(self.playground);
+        allocator.destroy(self.shader_fuse);
     }
 
     pub fn has_updates(self: *@This()) bool {
-        return self.shader_fuse.can_recv();
+        return self.compiler.ctx.channel.can_recv();
     }
 
-    pub fn try_get_update(self: *@This()) ?UpdateEvent {
-        while (self.shader_fuse.try_recv()) |ev| {
-            switch (ev) {
-                .All => {
-                    return .All;
-                },
-                .File => |path| {
-                    defer allocator.free(path);
-                    if (std.mem.eql(u8, path, "buffer1.glsl")) {
-                        return .Buffer1;
-                    }
-                    if (std.mem.eql(u8, path, "buffer2.glsl")) {
-                        return .Buffer2;
-                    }
-                    if (std.mem.eql(u8, path, "buffer3.glsl")) {
-                        return .Buffer3;
-                    }
-                    if (std.mem.eql(u8, path, "buffer4.glsl")) {
-                        return .Buffer4;
-                    }
-                    if (std.mem.eql(u8, path, "image.glsl")) {
-                        return .Image;
-                    }
-                    if (std.mem.eql(u8, path, "common.glsl")) {
-                        return .All;
-                    }
-                    if (std.mem.eql(u8, path, "toy.json")) {
-                        return .All;
-                    }
-                    if (std.mem.eql(u8, path, "frag.glsl")) {
-                        return .All;
-                    }
-                    if (std.mem.eql(u8, path, "vert.glsl")) {
-                        return .All;
-                    }
-                    std.debug.print("Unknown file update: {s}\n", .{path});
-                },
-            }
-        }
-        return null;
+    pub fn try_get_shader_update(self: *@This()) ?CompileEvent {
+        return self.compiler.ctx.channel.try_recv();
     }
 
     pub fn load_shadertoy(self: *@This(), id: []const u8) !void {
@@ -156,7 +481,8 @@ pub const ToyMan = struct {
 
         const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
-        self.active_toy = active;
+        self.active_toy.* = active;
+        try self.compiler.ctx.toy_chan.send(active.clone());
 
         try self.shader_fuse.restart(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
@@ -175,7 +501,8 @@ pub const ToyMan = struct {
 
         const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
-        self.active_toy = active;
+        self.active_toy.* = active;
+        try self.compiler.ctx.toy_chan.send(active.clone());
 
         try self.shader_fuse.restart(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
@@ -445,6 +772,10 @@ pub const ActiveToy = struct {
         if (self.passes.buffer4) |*buf| {
             self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
+    }
+
+    pub fn clone(self: *const @This()) @This() {
+        return self.*;
     }
 
     pub fn deinit(self: *@This()) void {

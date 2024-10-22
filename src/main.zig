@@ -33,7 +33,7 @@ pub const config = .{
     },
 };
 
-const Renderer = struct {
+pub const Renderer = struct {
     pub const name = .renderer;
     pub const systems = .{
         .init = .{ .handler = init },
@@ -249,11 +249,11 @@ const Renderer = struct {
             bind_group_layout: *gpu.BindGroupLayout,
 
             fn init(
-                render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 binding: *Binding,
                 view: *gpu.TextureView,
                 sampler: *gpu.Sampler,
+                shader: *const Shadertoy.ToyMan.CompiledShader,
             ) !@This() {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
@@ -263,7 +263,7 @@ const Renderer = struct {
                     bind.group.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, render_config, false, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, .screen);
+                var pipeline = try Pass.create_pipeline(device, bind.layout, core_mod.get(core.main_window, .framebuffer_format).?, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -353,10 +353,10 @@ const Renderer = struct {
 
             fn init(
                 at: *Shadertoy.ActiveToy,
-                render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 channels: *Buffers,
                 binding: *Binding,
+                shader: *const Shadertoy.ToyMan.CompiledShader,
             ) !@This() {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
@@ -369,7 +369,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, render_config, at.has_common, bind.layout, .rgba32_float, .image);
+                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba32_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -448,13 +448,11 @@ const Renderer = struct {
             inputs: Inputs,
 
             fn init(
-                at: *Shadertoy.ActiveToy,
-                render_config: *const Config,
                 core_mod: *mach.Core.Mod,
                 pass: *Shadertoy.ActiveToy.BufferPass,
                 channels: *Buffers,
                 binding: *Binding,
-                include: enum { buffer1, buffer2, buffer3, buffer4 },
+                shader: *const Shadertoy.ToyMan.CompiledShader,
             ) !@This() {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
@@ -466,12 +464,7 @@ const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, render_config, at.has_common, bind.layout, .rgba32_float, switch (include) {
-                    .buffer1 => .buffer1,
-                    .buffer2 => .buffer2,
-                    .buffer3 => .buffer3,
-                    .buffer4 => .buffer4,
-                });
+                var pipeline = try create_pipeline(device, bind.layout, .rgba32_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -614,135 +607,23 @@ const Renderer = struct {
 
             fn create_pipeline(
                 device: *gpu.Device,
-                render_config: *const Config,
-                has_common: bool,
                 bg_layout: *gpu.BindGroupLayout,
                 format: gpu.Texture.Format,
-                include: enum { screen, image, buffer1, buffer2, buffer3, buffer4 },
+                shader: *const Shadertoy.ToyMan.CompiledShader,
             ) !*gpu.RenderPipeline {
-                var definitions = std.ArrayList([]const u8).init(allocator);
-                defer {
-                    for (definitions.items) |def| {
-                        allocator.free(def);
-                    }
-                    definitions.deinit();
-                }
-                if (has_common) {
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
-                }
-
-                // NOTE: webgpu does not have a simple way to flip texture without copying it.
-                // shadertoy's buffer inputs always have vflip = true
-                // on shadertoy, texture fetches have y coord flipped compared to webgpu
-                // this hack just flips the y coord on buffer's mainImage fragCoord param. might fail if shadertoy
-                //  buffer vflip = false
-                switch (include) {
-                    .image => {},
-                    .screen, .buffer1, .buffer2, .buffer3, .buffer4 => {
-                        try definitions.append(try allocator.dupe(u8, "ZHADER_VFLIP"));
-                    },
-                }
-
-                switch (include) {
-                    .screen => {},
-                    .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
-                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
-                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
-                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
-                        try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
-                    },
-                }
-
-                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (include) {
-                    .screen => "SCREEN",
-                    .image => "IMAGE",
-                    .buffer1 => "BUF1",
-                    .buffer2 => "BUF2",
-                    .buffer3 => "BUF3",
-                    .buffer4 => "BUF4",
-                }}));
-
-                var compiler = Glslc.Compiler{ .opt = render_config.shader_compile_opt };
-                compiler.stage = .vertex;
-                const vert: Glslc.Compiler.Code = .{ .path = .{
-                    .main = "./shaders/vert.glsl",
-                    .include = &[_][]const u8{config.paths.playground},
-                    .definitions = definitions.items,
-                } };
-                // if (render_config.shader_dump_assembly) {
-                //     _ = compiler.dump_assembly(allocator, &vert);
-                // }
-                const vertex_bytes = blk: {
-                    const res = try compiler.compile(
-                        allocator,
-                        &vert,
-                        .spirv,
-                    );
-                    switch (res) {
-                        .Ok => |ok| {
-                            try render_config.gpu_err_fuse.err_channel.send(null);
-                            break :blk ok;
-                        },
-                        .Err => |msg| {
-                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
-                            return msg.err;
-                        },
-                    }
-                };
-                defer allocator.free(vertex_bytes);
                 const vertex_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
                     .next_in_chain = .{ .spirv_descriptor = &.{
-                        .code_size = @intCast(vertex_bytes.len),
-                        .code = vertex_bytes.ptr,
+                        .code_size = @intCast(shader.vert.len),
+                        .code = shader.vert.ptr,
                     } },
                     .label = "vert.glsl",
                 });
                 defer vertex_shader_module.release();
-
-                compiler.stage = .fragment;
-                const frag: Glslc.Compiler.Code = .{ .path = .{
-                    .main = "./shaders/frag.glsl",
-                    .include = &[_][]const u8{config.paths.playground},
-                    .definitions = definitions.items,
-                } };
-                if (render_config.shader_dump_assembly) blk: {
-                    // TODO: print this on screen instead of console
-                    const res = compiler.dump_assembly(allocator, &frag) catch {
-                        break :blk;
-                    };
-                    switch (res) {
-                        .Err => |msg| {
-                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
-                            return msg.err;
-                        },
-                        .Ok => {
-                            try render_config.gpu_err_fuse.err_channel.send(null);
-                        },
-                    }
-                }
-                const frag_bytes = blk: {
-                    const res = try compiler.compile(
-                        allocator,
-                        &frag,
-                        .spirv,
-                    );
-                    switch (res) {
-                        .Ok => |ok| {
-                            try render_config.gpu_err_fuse.err_channel.send(null);
-                            break :blk ok;
-                        },
-                        .Err => |msg| {
-                            try render_config.gpu_err_fuse.err_channel.send(msg.msg);
-                            return msg.err;
-                        },
-                    }
-                };
-                defer allocator.free(frag_bytes);
                 const frag_shader_module = device.createShaderModule(&gpu.ShaderModule.Descriptor{
                     .next_in_chain = .{
                         .spirv_descriptor = &.{
-                            .code_size = @intCast(frag_bytes.len),
-                            .code = frag_bytes.ptr,
+                            .code_size = @intCast(shader.frag.len),
+                            .code = shader.frag.ptr,
                             .chain = .{
                                 // - [WebGPU Shading Language](https://www.w3.org/TR/WGSL/#uniformity)
                                 // - [Designing a uniformity opt-out (similar thing exists in dawn :})](https://github.com/gpuweb/gpuweb/issues/3554)
@@ -984,7 +865,7 @@ const Renderer = struct {
         binding: Binding,
         uniforms: ShadertoyUniformBuffers,
 
-        fn init(at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod, size: gpu.Extent3D) !@This() {
+        fn init(at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod, size: gpu.Extent3D, compiler: *Shadertoy.ToyMan.Compiler) !@This() {
             const core: *mach.Core = core_mod.state();
             const device: *gpu.Device = core.device;
 
@@ -1000,17 +881,42 @@ const Renderer = struct {
             var buffers = Buffers.init(device, size);
             errdefer buffers.release();
 
-            var screen_pass = try ScreenPass.init(render_config, core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler);
+            var shader = try compiler.ctx.compile(.Screen, at.has_common);
+            defer shader.deinit();
+            var screen_pass = try ScreenPass.init(core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler, &shader);
             errdefer screen_pass.release();
-            var image_pass = try ImagePass.init(at, render_config, core_mod, &buffers, &binding);
+
+            shader.deinit();
+            shader = try compiler.ctx.compile(.Image, at.has_common);
+            var image_pass = try ImagePass.init(at, core_mod, &buffers, &binding, &shader);
             errdefer image_pass.release();
-            var pass1 = if (at.passes.buffer1) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer1) else null;
+
+            var pass1 = if (at.passes.buffer1) |*pass| blk: {
+                shader.deinit();
+                shader = try compiler.ctx.compile(.Buffer1, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+            } else null;
             errdefer if (pass1) |*pass| pass.release();
-            var pass2 = if (at.passes.buffer2) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer2) else null;
+
+            var pass2 = if (at.passes.buffer2) |*pass| blk: {
+                shader.deinit();
+                shader = try compiler.ctx.compile(.Buffer2, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+            } else null;
             errdefer if (pass2) |*pass| pass.release();
-            var pass3 = if (at.passes.buffer3) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer3) else null;
+
+            var pass3 = if (at.passes.buffer3) |*pass| blk: {
+                shader.deinit();
+                shader = try compiler.ctx.compile(.Buffer3, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+            } else null;
             errdefer if (pass3) |*pass| pass.release();
-            var pass4 = if (at.passes.buffer4) |*pass| try Pass.init(at, render_config, core_mod, pass, &buffers, &binding, .buffer4) else null;
+
+            var pass4 = if (at.passes.buffer4) |*pass| blk: {
+                shader.deinit();
+                shader = try compiler.ctx.compile(.Buffer4, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+            } else null;
             errdefer if (pass4) |*pass| pass.release();
 
             return .{
@@ -1028,51 +934,47 @@ const Renderer = struct {
             };
         }
 
-        fn update(self: *@This(), at: *Shadertoy.ActiveToy, render_config: *const Config, core_mod: *mach.Core.Mod, ev: Shadertoy.ToyMan.UpdateEvent) !void {
-            switch (ev) {
-                .Buffer1 => {
-                    var buf1 = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
+        fn update(self: *@This(), at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod, ev: *const Shadertoy.ToyMan.CompileEvent) !void {
+            switch (ev.*) {
+                .Buffer1 => |shader| {
+                    var buf = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer1.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf1, &self.buffers, &self.binding, .buffer1);
+                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
                     self.pass.buffer1 = new_pass;
                     pass.release();
                 },
-                .Buffer2 => {
-                    var buf2 = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
+                .Buffer2 => |shader| {
+                    var buf = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer2.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf2, &self.buffers, &self.binding, .buffer2);
+                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
                     self.pass.buffer2 = new_pass;
                     pass.release();
                 },
-                .Buffer3 => {
-                    var buf3 = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
+                .Buffer3 => |shader| {
+                    var buf = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer3.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf3, &self.buffers, &self.binding, .buffer3);
+                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
                     self.pass.buffer3 = new_pass;
                     pass.release();
                 },
-                .Buffer4 => {
-                    var buf4 = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
+                .Buffer4 => |shader| {
+                    var buf = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
                     var pass = self.pass.buffer4.?;
-                    const new_pass = try Pass.init(at, render_config, core_mod, &buf4, &self.buffers, &self.binding, .buffer4);
+                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
                     self.pass.buffer4 = new_pass;
                     pass.release();
                 },
-                .Image => {
+                .Image => |shader| {
                     var pass = self.pass.image;
-                    const new_pass = try ImagePass.init(at, render_config, core_mod, &self.buffers, &self.binding);
+                    const new_pass = try ImagePass.init(at, core_mod, &self.buffers, &self.binding, &shader);
                     self.pass.image = new_pass;
                     pass.release();
                 },
-                .All => {
-                    var old_self = self.*;
-                    const size = .{
-                        .width = self.uniforms.uniforms.val.width,
-                        .height = self.uniforms.uniforms.val.height,
-                    };
-                    const new_self = try PlaygroundRenderInfo.init(at, render_config, core_mod, size);
-                    self.* = new_self;
-                    old_self.release();
+                .Screen => |shader| {
+                    var pass = self.pass.screen;
+                    const new_pass = try ScreenPass.init(core_mod, &self.binding, self.buffers.screen.tex.view, self.buffers.screen.sampler, &shader);
+                    self.pass.screen = new_pass;
+                    pass.release();
                 },
             }
         }
@@ -1169,7 +1071,7 @@ const Renderer = struct {
         }
     };
 
-    const Config = struct {
+    pub const Config = struct {
         shader_compile_opt: compile.Glslc.Compiler.Opt = .fast,
         shader_dump_assembly: bool = false,
         pause_shader: bool = false,
@@ -1181,13 +1083,14 @@ const Renderer = struct {
     timer: mach.Timer,
     toyman: Shadertoy.ToyMan,
     pri: PlaygroundRenderInfo,
-    config: Config,
+    config: *Config,
 
     fn deinit(self_mod: *Mod) !void {
         const self: *@This() = self_mod.state();
         self.toyman.deinit();
         self.pri.release();
         self.config.gpu_err_fuse.deinit();
+        allocator.destroy(self.config);
     }
 
     fn init(
@@ -1196,12 +1099,15 @@ const Renderer = struct {
     ) !void {
         const core: *mach.Core = core_mod.state();
         const device = core.device;
-        var man = try Shadertoy.ToyMan.init();
-        errdefer man.deinit();
 
-        const render_config: Config = .{
+        const render_config = try allocator.create(Config);
+        errdefer allocator.destroy(render_config);
+        render_config.* = .{
             .gpu_err_fuse = try GpuFuse.init(allocator),
         };
+
+        var man = try Shadertoy.ToyMan.init(render_config);
+        errdefer man.deinit();
 
         const height = core_mod.get(core.main_window, .height).?;
         const width = core_mod.get(core.main_window, .width).?;
@@ -1213,7 +1119,7 @@ const Renderer = struct {
 
         // TODO: this initialzation should be all from @embed() shaders
         try man.load_zhadertoy("new");
-        var pri = try PlaygroundRenderInfo.init(&man.active_toy, &render_config, core_mod, size);
+        var pri = try PlaygroundRenderInfo.init(man.active_toy, core_mod, size, &man.compiler);
         errdefer pri.release();
 
         // - [machengine.org/content/engine/gpu/errors.md](https://github.com/hexops/machengine.org/blob/e10e4245c4c1de7fe9e4882e378a86d42eb1035a/content/engine/gpu/errors.md)
@@ -1275,14 +1181,6 @@ const Renderer = struct {
             self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
         }
 
-        if (self.config.resize_fuse.unfuse()) {
-            self.pri.update(&self.toyman.active_toy, &self.config, core_mod, .All) catch |e| {
-                std.debug.print("Error while updating shaders: {any}\n", .{e});
-            };
-            _ = self.config.gpu_err_fuse.err_fuse.unfuse();
-            _ = self.config.ignore_pause_fuse.fuse();
-        }
-
         var command = encoder.finish(&.{ .label = label });
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
@@ -1296,10 +1194,10 @@ const Renderer = struct {
     ) !void {
         const self: *@This() = self_mod.state();
 
-        while (self.toyman.try_get_update()) |ev| {
-            std.debug.print("updating shader: {any}\n", .{ev});
-
-            self.pri.update(&self.toyman.active_toy, &self.config, core_mod, ev) catch |e| {
+        while (self.toyman.try_get_shader_update()) |ev_| {
+            var ev = ev_;
+            defer ev.deinit();
+            self.pri.update(self.toyman.active_toy, core_mod, &ev) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
             _ = self.config.gpu_err_fuse.err_fuse.unfuse();
@@ -1669,6 +1567,7 @@ const Gui = struct {
             "s:MdX3Rr: iq 3d noise mountain",
             "s:WlKXzm: satellite thing",
             "s:43lfRB: cool blue 3d fractal",
+            "s:3tsyzl: iq geoids",
             "s:7slfWX: uninitialized vars",
             "s:WdyGzy: idk. broken",
         };

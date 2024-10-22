@@ -205,6 +205,7 @@ pub fn Deque(typ: type) type {
     };
 }
 
+// MAYBE: condvars + .block_recv()
 pub fn Channel(typ: type) type {
     return struct {
         const Dq = Deque(typ);
@@ -292,7 +293,10 @@ pub const FsFuse = struct {
     pub fn deinit(self: @This()) void {
         _ = c.fsw_stop_monitor(self.ctx.handle);
         _ = c.fsw_destroy_session(self.ctx.handle);
-        self.thread.join();
+
+        // OOF: freezes the thread for a while
+        // self.thread.join();
+
         self.ctx.channel.deinit();
         allocator.free(self.ctx.path);
         allocator.destroy(self.ctx);
