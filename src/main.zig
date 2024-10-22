@@ -852,13 +852,22 @@ pub const Renderer = struct {
         pass: struct {
             screen: ScreenPass,
             image: ImagePass,
-            buffer1: ?Pass,
-            buffer2: ?Pass,
-            buffer3: ?Pass,
-            buffer4: ?Pass,
+            buffer1: ?Pass = null,
+            buffer2: ?Pass = null,
+            buffer3: ?Pass = null,
+            buffer4: ?Pass = null,
 
             fn init() !@This() {
                 return .{};
+            }
+
+            fn release(self: *@This()) void {
+                self.screen.release();
+                self.image.release();
+                if (self.buffer1) |*buf| buf.release();
+                if (self.buffer2) |*buf| buf.release();
+                if (self.buffer3) |*buf| buf.release();
+                if (self.buffer4) |*buf| buf.release();
             }
         },
         buffers: Buffers,
@@ -881,41 +890,43 @@ pub const Renderer = struct {
             var buffers = Buffers.init(device, size);
             errdefer buffers.release();
 
-            var shader = try compiler.ctx.compile(.Screen, at.has_common);
-            defer shader.deinit();
-            var screen_pass = try ScreenPass.init(core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler, &shader);
+            const vert = try compiler.ctx.compile_vert();
+            defer allocator.free(vert);
+            var shader = try compiler.ctx.compile(.screen, at.has_common);
+            defer allocator.free(shader);
+            var screen_pass = try ScreenPass.init(core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler, &.{ .vert = vert, .frag = shader });
             errdefer screen_pass.release();
 
-            shader.deinit();
-            shader = try compiler.ctx.compile(.Image, at.has_common);
-            var image_pass = try ImagePass.init(at, core_mod, &buffers, &binding, &shader);
+            allocator.free(shader);
+            shader = try compiler.ctx.compile(.image, at.has_common);
+            var image_pass = try ImagePass.init(at, core_mod, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             errdefer image_pass.release();
 
             var pass1 = if (at.passes.buffer1) |*pass| blk: {
-                shader.deinit();
-                shader = try compiler.ctx.compile(.Buffer1, at.has_common);
-                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+                allocator.free(shader);
+                shader = try compiler.ctx.compile(.buffer1, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass1) |*pass| pass.release();
 
             var pass2 = if (at.passes.buffer2) |*pass| blk: {
-                shader.deinit();
-                shader = try compiler.ctx.compile(.Buffer2, at.has_common);
-                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+                allocator.free(shader);
+                shader = try compiler.ctx.compile(.buffer2, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass2) |*pass| pass.release();
 
             var pass3 = if (at.passes.buffer3) |*pass| blk: {
-                shader.deinit();
-                shader = try compiler.ctx.compile(.Buffer3, at.has_common);
-                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+                allocator.free(shader);
+                shader = try compiler.ctx.compile(.buffer3, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass3) |*pass| pass.release();
 
             var pass4 = if (at.passes.buffer4) |*pass| blk: {
-                shader.deinit();
-                shader = try compiler.ctx.compile(.Buffer4, at.has_common);
-                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &shader);
+                allocator.free(shader);
+                shader = try compiler.ctx.compile(.buffer4, at.has_common);
+                break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass4) |*pass| pass.release();
 
@@ -934,49 +945,53 @@ pub const Renderer = struct {
             };
         }
 
-        fn update(self: *@This(), at: *Shadertoy.ActiveToy, core_mod: *mach.Core.Mod, ev: *const Shadertoy.ToyMan.CompileEvent) !void {
-            switch (ev.*) {
-                .Buffer1 => |shader| {
-                    var buf = at.passes.buffer1 orelse return error.BufferPassDoesNotExist;
-                    var pass = self.pass.buffer1.?;
-                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
-                    self.pass.buffer1 = new_pass;
-                    pass.release();
-                },
-                .Buffer2 => |shader| {
-                    var buf = at.passes.buffer2 orelse return error.BufferPassDoesNotExist;
-                    var pass = self.pass.buffer2.?;
-                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
-                    self.pass.buffer2 = new_pass;
-                    pass.release();
-                },
-                .Buffer3 => |shader| {
-                    var buf = at.passes.buffer3 orelse return error.BufferPassDoesNotExist;
-                    var pass = self.pass.buffer3.?;
-                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
-                    self.pass.buffer3 = new_pass;
-                    pass.release();
-                },
-                .Buffer4 => |shader| {
-                    var buf = at.passes.buffer4 orelse return error.BufferPassDoesNotExist;
-                    var pass = self.pass.buffer4.?;
-                    const new_pass = try Pass.init(core_mod, &buf, &self.buffers, &self.binding, &shader);
-                    self.pass.buffer4 = new_pass;
-                    pass.release();
-                },
-                .Image => |shader| {
-                    var pass = self.pass.image;
-                    const new_pass = try ImagePass.init(at, core_mod, &self.buffers, &self.binding, &shader);
-                    self.pass.image = new_pass;
-                    pass.release();
-                },
-                .Screen => |shader| {
-                    var pass = self.pass.screen;
-                    const new_pass = try ScreenPass.init(core_mod, &self.binding, self.buffers.screen.tex.view, self.buffers.screen.sampler, &shader);
-                    self.pass.screen = new_pass;
-                    pass.release();
-                },
+        fn update(self: *@This(), core_mod: *mach.Core.Mod, comp: *Shadertoy.ToyMan.Compiled) !void {
+            const core: *mach.Core = core_mod.state();
+            const device = core.device;
+
+            comp.mutex.lock();
+            defer comp.mutex.unlock();
+
+            if (comp.input_fuse.unfuse()) {
+                self.resize(device);
             }
+
+            var new: @TypeOf(self.pass) = blk: {
+                var image = try ImagePass.init(&comp.toy, core_mod, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.image });
+                errdefer image.release();
+                var screen = try ScreenPass.init(core_mod, &self.binding, self.buffers.screen.tex.view, self.buffers.screen.sampler, &.{ .vert = comp.vert, .frag = comp.screen });
+                errdefer screen.release();
+
+                break :blk .{
+                    .image = image,
+                    .screen = screen,
+                };
+            };
+            errdefer new.release();
+
+            if (comp.toy.passes.buffer1) |*buf| {
+                new.buffer1 = try Pass.init(core_mod, buf, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.buffer1.? });
+            }
+            if (comp.toy.passes.buffer2) |*buf| {
+                new.buffer2 = try Pass.init(core_mod, buf, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.buffer2.? });
+            }
+            if (comp.toy.passes.buffer3) |*buf| {
+                new.buffer3 = try Pass.init(core_mod, buf, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.buffer3.? });
+            }
+            if (comp.toy.passes.buffer4) |*buf| {
+                new.buffer4 = try Pass.init(core_mod, buf, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.buffer4.? });
+            }
+
+            self.pass.release();
+            self.pass = new;
+        }
+
+        fn resize(self: *@This(), device: *gpu.Device) void {
+            self.buffers.release();
+            self.buffers = Buffers.init(device, .{
+                .width = self.uniforms.uniforms.val.width,
+                .height = self.uniforms.uniforms.val.height,
+            });
         }
 
         fn swap(self: *@This()) void {
@@ -1000,12 +1015,7 @@ pub const Renderer = struct {
         }
 
         fn release(self: *@This()) void {
-            self.pass.screen.release();
-            self.pass.image.release();
-            if (self.pass.buffer1) |*buf| buf.release();
-            if (self.pass.buffer2) |*buf| buf.release();
-            if (self.pass.buffer3) |*buf| buf.release();
-            if (self.pass.buffer4) |*buf| buf.release();
+            self.pass.release();
 
             self.buffers.release();
             self.binding.deinit(allocator);
@@ -1185,6 +1195,10 @@ pub const Renderer = struct {
         defer command.release();
         core.queue.submit(&[_]*gpu.CommandBuffer{command});
 
+        if (self.config.resize_fuse.unfuse()) {
+            _ = self.toyman.compiler.fuse_resize();
+        }
+
         try self.config.gpu_err_fuse.tick();
     }
 
@@ -1194,10 +1208,8 @@ pub const Renderer = struct {
     ) !void {
         const self: *@This() = self_mod.state();
 
-        while (self.toyman.try_get_shader_update()) |ev_| {
-            var ev = ev_;
-            defer ev.deinit();
-            self.pri.update(self.toyman.active_toy, core_mod, &ev) catch |e| {
+        if (self.toyman.compiler.unfuse()) |compiled| {
+            self.pri.update(core_mod, compiled) catch |e| {
                 std.debug.print("Error while updating shaders: {any}\n", .{e});
             };
             _ = self.config.gpu_err_fuse.err_fuse.unfuse();

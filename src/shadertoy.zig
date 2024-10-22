@@ -70,40 +70,49 @@ pub const ToyMan = struct {
     pub const CompiledShader = struct {
         vert: []u32,
         frag: []u32,
-
-        pub fn deinit(self: *@This()) void {
-            allocator.free(self.frag);
-
-            // NOTE: this is owned by the compiler
-            // allocator.free(self.vert);
-        }
     };
-    pub const CompileEventTag = std.meta.Tag(CompileEvent);
-    pub const CompileEvent = union(enum) {
-        Screen: CompiledShader,
-        Image: CompiledShader,
-        Buffer1: CompiledShader,
-        Buffer2: CompiledShader,
-        Buffer3: CompiledShader,
-        Buffer4: CompiledShader,
+    pub const Compiled = struct {
+        mutex: std.Thread.Mutex = .{},
+        input_fuse: Fuse = .{},
+        toy: ActiveToy,
+        vert: []u32,
+
+        screen: []u32,
+        image: []u32,
+        buffer1: ?[]u32 = null,
+        buffer2: ?[]u32 = null,
+        buffer3: ?[]u32 = null,
+        buffer4: ?[]u32 = null,
+
+        fn no_lock_deinit(self: *@This()) void {
+            allocator.free(self.vert);
+            allocator.free(self.screen);
+            allocator.free(self.image);
+            if (self.buffer1) |buf| allocator.free(buf);
+            if (self.buffer2) |buf| allocator.free(buf);
+            if (self.buffer3) |buf| allocator.free(buf);
+            if (self.buffer4) |buf| allocator.free(buf);
+            self.toy.deinit();
+        }
 
         pub fn deinit(self: *@This()) void {
-            switch (self.*) {
-                inline else => |*val| val.deinit(),
-            }
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            self.no_lock_deinit();
         }
     };
     pub const Compiler = struct {
-        const EventChan = utils.Channel(CompileEvent);
+        const EventChan = utils.Channel(Compiled);
         const ToyChan = utils.Channel(ActiveToy);
         const Ctx = struct {
             config: *main.Renderer.Config,
             shader_fuse: *FsFuse,
 
             exit: Fuse = .{},
+            compile_fuse: Fuse = .{},
             toy_chan: ToyChan,
-            channel: EventChan,
-            vert: []u32,
+            compiled: ?Compiled,
 
             fn try_get_update(self: *@This()) ?UpdateEvent {
                 while (self.shader_fuse.try_recv()) |ev| {
@@ -147,76 +156,114 @@ pub const ToyMan = struct {
                 return null;
             }
 
-            fn compile_and_send(self: *@This(), ev: CompileEventTag, has_common: bool) void {
-                const shader = self.compile(ev, has_common) catch |e| {
-                    std.debug.print("{any}\n", .{e});
-                    return;
-                };
-                const event: CompileEvent = switch (ev) {
-                    .Screen => .{ .Screen = shader },
-                    .Image => .{ .Image = shader },
-                    .Buffer1 => .{ .Buffer1 = shader },
-                    .Buffer2 => .{ .Buffer2 = shader },
-                    .Buffer3 => .{ .Buffer3 = shader },
-                    .Buffer4 => .{ .Buffer4 = shader },
-                };
-                self.channel.send(event) catch unreachable;
-            }
-
-            fn handle_update_blocked(self: *@This(), e: UpdateEvent, at: *ActiveToy) void {
+            fn handle_update_blocked(self: *@This(), e: UpdateEvent, at: *ActiveToy) !void {
                 switch (e) {
                     .Buffer1 => {
-                        self.compile_and_send(.Buffer1, at.has_common);
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        if (self.compiled.?.buffer1) |buf| {
+                            self.compiled.?.buffer1 = try self.compile(.buffer1, at.has_common);
+                            allocator.free(buf);
+                        }
                     },
                     .Buffer2 => {
-                        self.compile_and_send(.Buffer2, at.has_common);
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        if (self.compiled.?.buffer2) |buf| {
+                            self.compiled.?.buffer2 = try self.compile(.buffer2, at.has_common);
+                            allocator.free(buf);
+                        }
                     },
                     .Buffer3 => {
-                        self.compile_and_send(.Buffer3, at.has_common);
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        if (self.compiled.?.buffer3) |buf| {
+                            self.compiled.?.buffer3 = try self.compile(.buffer3, at.has_common);
+                            allocator.free(buf);
+                        }
                     },
                     .Buffer4 => {
-                        self.compile_and_send(.Buffer4, at.has_common);
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        if (self.compiled.?.buffer4) |buf| {
+                            self.compiled.?.buffer4 = try self.compile(.buffer4, at.has_common);
+                            allocator.free(buf);
+                        }
                     },
                     .Image => {
-                        self.compile_and_send(.Image, at.has_common);
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        const buf = self.compiled.?.image;
+                        self.compiled.?.image = try self.compile(.image, at.has_common);
+                        allocator.free(buf);
                     },
                     .All => {
-                        if (at.passes.buffer1) |_| self.compile_and_send(.Buffer1, at.has_common);
-                        if (at.passes.buffer2) |_| self.compile_and_send(.Buffer2, at.has_common);
-                        if (at.passes.buffer3) |_| self.compile_and_send(.Buffer3, at.has_common);
-                        if (at.passes.buffer4) |_| self.compile_and_send(.Buffer4, at.has_common);
-                        self.compile_and_send(.Image, at.has_common);
-                        self.compile_and_send(.Screen, at.has_common);
+                        var compiled = blk: {
+                            const image = try self.compile(.image, at.has_common);
+                            errdefer allocator.free(image);
+
+                            const screen = try self.compile(.screen, at.has_common);
+                            errdefer allocator.free(screen);
+
+                            const vert = try self.compile_vert();
+                            errdefer allocator.free(vert);
+
+                            break :blk Compiled{
+                                .vert = vert,
+                                .screen = screen,
+                                .image = image,
+                                .toy = at.clone(),
+                            };
+                        };
+                        errdefer compiled.deinit();
+
+                        if (at.passes.buffer1) |_| compiled.buffer1 = try self.compile(.buffer1, at.has_common);
+                        if (at.passes.buffer2) |_| compiled.buffer2 = try self.compile(.buffer2, at.has_common);
+                        if (at.passes.buffer3) |_| compiled.buffer3 = try self.compile(.buffer3, at.has_common);
+                        if (at.passes.buffer4) |_| compiled.buffer4 = try self.compile(.buffer4, at.has_common);
+
+                        _ = compiled.input_fuse.fuse();
+
+                        if (self.compiled) |*comp| {
+                            comp.mutex.lock();
+                            defer comp.mutex.unlock();
+                            comp.no_lock_deinit();
+
+                            compiled.mutex = comp.mutex;
+                            comp.* = compiled;
+                        } else {
+                            self.compiled = compiled;
+                        }
                     },
                 }
+
+                _ = self.compile_fuse.fuse();
+            }
+
+            pub fn compile(self: *@This(), include: ShaderInclude, has_common: bool) ![]u32 {
+                return try compile_frag(self.config, has_common, include);
+            }
+
+            pub fn compile_vert(self: *@This()) ![]u32 {
+                return try Compiler.compile_vert(self.config);
             }
 
             pub fn reload_all(self: *@This()) !void {
                 try self.shader_fuse.ctx.channel.send(.All);
             }
 
-            pub fn compile(self: *@This(), ev: CompileEventTag, has_common: bool) !CompiledShader {
-                return .{
-                    .vert = self.vert,
-                    .frag = try compile_frag(self.config, has_common, switch (ev) {
-                        .Screen => .screen,
-                        .Image => .image,
-                        .Buffer1 => .buffer1,
-                        .Buffer2 => .buffer2,
-                        .Buffer3 => .buffer3,
-                        .Buffer4 => .buffer4,
-                    }),
-                };
-            }
-
             fn deinit(self: *@This()) void {
-                while (self.channel.try_recv()) |ev_| {
+                while (self.toy_chan.try_recv()) |ev_| {
                     var ev = ev_;
                     ev.deinit();
                 }
-                self.channel.deinit();
                 self.toy_chan.deinit();
-                allocator.free(self.vert);
+                if (self.compiled) |*c| c.deinit();
 
                 // NOTE: not owned
                 // self.config
@@ -227,12 +274,8 @@ pub const ToyMan = struct {
         thread: std.Thread,
 
         pub fn init(render_config: *main.Renderer.Config, shader_fuse: *FsFuse) !@This() {
-            var chan = try EventChan.init(allocator);
-            errdefer chan.deinit();
             var toy_chan = try ToyChan.init(allocator);
             errdefer toy_chan.deinit();
-            const vert = try compile_vert(render_config);
-            errdefer allocator.free(vert);
 
             const ctxt = try allocator.create(Ctx);
             errdefer allocator.destroy(ctxt);
@@ -240,8 +283,7 @@ pub const ToyMan = struct {
                 .toy_chan = toy_chan,
                 .config = render_config,
                 .shader_fuse = shader_fuse,
-                .channel = chan,
-                .vert = vert,
+                .compiled = null,
             };
             errdefer ctxt.deinit();
 
@@ -258,7 +300,7 @@ pub const ToyMan = struct {
                             at.deinit();
                             at = toy;
                         }
-                        while (ctx.try_get_update()) |e| ctx.handle_update_blocked(e, &at);
+                        while (ctx.try_get_update()) |e| ctx.handle_update_blocked(e, &at) catch continue;
 
                         std.time.sleep(std.time.ns_per_ms * 100);
                     }
@@ -277,6 +319,27 @@ pub const ToyMan = struct {
             self.thread.join();
             self.ctx.deinit();
             allocator.destroy(self.ctx);
+        }
+
+        pub fn fuse_resize(self: *@This()) void {
+            if (self.ctx.compiled) |*comp| {
+                comp.mutex.lock();
+                defer comp.mutex.unlock();
+
+                _ = comp.input_fuse.fuse();
+            }
+            _ = self.ctx.compile_fuse.fuse();
+        }
+
+        pub fn unfuse(self: *@This()) ?*Compiled {
+            if (self.ctx.compile_fuse.unfuse()) {
+                if (self.ctx.compiled) |*compiled| {
+                    return compiled;
+                } else {
+                    return null;
+                }
+            }
+            return null;
         }
 
         fn compile_vert(
@@ -463,11 +526,7 @@ pub const ToyMan = struct {
     }
 
     pub fn has_updates(self: *@This()) bool {
-        return self.compiler.ctx.channel.can_recv();
-    }
-
-    pub fn try_get_shader_update(self: *@This()) ?CompileEvent {
-        return self.compiler.ctx.channel.try_recv();
+        return self.compiler.ctx.compile_fuse.check();
     }
 
     pub fn load_shadertoy(self: *@This(), id: []const u8) !void {
