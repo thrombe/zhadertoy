@@ -64,6 +64,49 @@ pub const JsonHelpers = struct {
     }
 };
 
+pub const ColorParse = struct {
+    pub fn hex_rgba(typ: type, comptime hex: []const u8) typ {
+        if (hex.len != 9 or hex[0] != '#') {
+            @compileError("invalid color");
+        }
+
+        return .{
+            .r = @as(f32, @floatFromInt(parseHex(hex[1], hex[2]))) / 255.0,
+            .g = @as(f32, @floatFromInt(parseHex(hex[3], hex[4]))) / 255.0,
+            .b = @as(f32, @floatFromInt(parseHex(hex[5], hex[6]))) / 255.0,
+            .a = @as(f32, @floatFromInt(parseHex(hex[7], hex[8]))) / 255.0,
+        };
+    }
+
+    pub fn hex_xyzw(typ: type, comptime hex: []const u8) typ {
+        if (hex.len != 9 or hex[0] != '#') {
+            @compileError("invalid color");
+        }
+
+        return .{
+            .x = @as(f32, @floatFromInt(parseHex(hex[1], hex[2]))) / 255.0,
+            .y = @as(f32, @floatFromInt(parseHex(hex[3], hex[4]))) / 255.0,
+            .z = @as(f32, @floatFromInt(parseHex(hex[5], hex[6]))) / 255.0,
+            .w = @as(f32, @floatFromInt(parseHex(hex[7], hex[8]))) / 255.0,
+        };
+    }
+
+    fn parseHex(comptime high: u8, comptime low: u8) u8 {
+        return (hexDigitToInt(high) << 4) | hexDigitToInt(low);
+    }
+
+    fn hexDigitToInt(comptime digit: u8) u8 {
+        if (digit >= '0' and digit <= '9') {
+            return digit - '0';
+        } else if (digit >= 'a' and digit <= 'f') {
+            return digit - 'a' + 10;
+        } else if (digit >= 'A' and digit <= 'F') {
+            return digit - 'A' + 10;
+        }
+        @compileError("invalid hex digit");
+    }
+};
+
 // assumes ok has ok.deinit()
 pub fn Result(ok: type, err_typ: type) type {
     return union(enum) {

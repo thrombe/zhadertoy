@@ -695,12 +695,7 @@ pub const Renderer = struct {
             ) void {
                 const color_attachments = [_]gpu.RenderPassColorAttachment{.{
                     .view = target,
-                    .clear_value = gpu.Color{
-                        .r = 40.0 / 255.0,
-                        .g = 40.0 / 255.0,
-                        .b = 40.0 / 255.0,
-                        .a = 1,
-                    },
+                    .clear_value = utils.ColorParse.hex_rgba(gpu.Color, "#282828ff"),
                     .load_op = .clear,
                     .store_op = .store,
                 }};
@@ -1449,6 +1444,7 @@ const Gui = struct {
         io.config_flags |= imgui.ConfigFlags_NavEnableKeyboard;
         io.font_global_scale = 1.0 / io.display_framebuffer_scale.y;
 
+        const color = utils.ColorParse.hex_xyzw;
         const style = imgui.getStyle();
         style.colors[imgui.Col_Text] = imgui.Vec4{ .x = 0.93, .y = 0.93, .z = 0.93, .w = 1.00 };
         style.colors[imgui.Col_TextDisabled] = imgui.Vec4{ .x = 0.5, .y = 0.5, .z = 0.5, .w = 1.00 };
@@ -1464,6 +1460,9 @@ const Gui = struct {
         style.colors[imgui.Col_Button] = imgui.Vec4{ .x = 0.80, .y = 0.20, .z = 0.20, .w = 1.00 };
         style.colors[imgui.Col_ButtonHovered] = imgui.Vec4{ .x = 1.00, .y = 0.50, .z = 0.50, .w = 1.00 };
         style.colors[imgui.Col_ButtonActive] = imgui.Vec4{ .x = 1.00, .y = 0.30, .z = 0.30, .w = 1.00 };
+        style.colors[imgui.Col_Header] = color(imgui.Vec4, "#3c3836ff");
+        style.colors[imgui.Col_HeaderHovered] = color(imgui.Vec4, "#504945ff");
+        style.colors[imgui.Col_HeaderActive] = color(imgui.Vec4, "#7c6f64ff");
         style.window_rounding = 5;
         style.frame_rounding = 3;
 
@@ -1552,12 +1551,7 @@ const Gui = struct {
 
         const color_attachment = gpu.RenderPassColorAttachment{
             .view = app.rendering_data.?.screen,
-            .clear_value = gpu.Color{
-                .r = 40.0 / 255.0,
-                .g = 40.0 / 255.0,
-                .b = 40.0 / 255.0,
-                .a = 1,
-            },
+            .clear_value = utils.ColorParse.hex_rgba(gpu.Color, "#282828ff"),
             .load_op = .load,
             .store_op = .store,
         };
