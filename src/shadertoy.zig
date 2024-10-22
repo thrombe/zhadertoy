@@ -74,6 +74,7 @@ pub const ToyMan = struct {
     pub const Compiled = struct {
         mutex: std.Thread.Mutex = .{},
         input_fuse: Fuse = .{},
+        uniform_reset_fuse: Fuse = .{},
         toy: ActiveToy,
         vert: []u32,
 
@@ -228,6 +229,7 @@ pub const ToyMan = struct {
                         if (at.passes.buffer4) |_| compiled.buffer4 = try self.compile(.buffer4, at.has_common);
 
                         _ = compiled.input_fuse.fuse();
+                        _ = compiled.uniform_reset_fuse.fuse();
 
                         if (self.compiled) |*comp| {
                             comp.mutex.lock();

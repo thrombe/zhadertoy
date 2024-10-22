@@ -221,6 +221,17 @@ pub const Renderer = struct {
         mouse_middle: bool = false,
 
         padding: u64 = 0,
+
+        fn reset_state(self: *@This()) void {
+            self.time = 0.0;
+            self.time_delta = 0.0;
+            self.frame = 0;
+            self.mouse_x = 0.0;
+            self.mouse_y = 0.0;
+            self.mouse_left = false;
+            self.mouse_right = false;
+            self.mouse_middle = false;
+        }
     };
     const ShadertoyUniformBuffers = struct {
         uniforms: *Buffer(ShadertoyUniforms),
@@ -954,6 +965,10 @@ pub const Renderer = struct {
 
             if (comp.input_fuse.unfuse()) {
                 self.resize(device);
+            }
+
+            if (comp.uniform_reset_fuse.unfuse()) {
+                self.uniforms.uniforms.val.reset_state();
             }
 
             var new: @TypeOf(self.pass) = blk: {
