@@ -340,7 +340,7 @@ pub const FsFuse = struct {
                 if (oke != c.FSW_OK) {
                     return error.FswSetFailed;
                 }
-                oke = c.fsw_set_latency(ctx.handle, 1.0);
+                oke = c.fsw_set_latency(ctx.handle, 0.2);
                 if (oke != c.FSW_OK) {
                     return error.FswSetFailed;
                 }
