@@ -37,7 +37,7 @@ uniform Uniforms {
 #define iTimeDelta zhader_uniforms.time_delta
 #define iFrame zhader_uniforms.frame
 #define iResolution vec3(float(zhader_uniforms.width), float(zhader_uniforms.height), 0.0)
-#define iMouse vec4(zhader_uniforms.mouse_x, zhader_uniforms.mouse_y, 0.0, 0.0)
+#define iMouse vec4(zhader_uniforms.mouse_x, zhader_uniforms.mouse_y, float(zhader_uniforms.mouse_left), float(zhader_uniforms.mouse_right))
 
 // TODO: sound :}
 float iChannelTime[4];
