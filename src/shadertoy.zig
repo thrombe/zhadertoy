@@ -1049,11 +1049,11 @@ pub const Cached = struct {
         return bytes;
     }
 
-    fn media_img(self: *@This(), media_path: []const u8) !utils.ImageMagick.Image {
+    fn media_img(self: *@This(), media_path: []const u8) !utils.ImageMagick.UnormImage {
         const bytes = try self.media_bytes(media_path);
         defer allocator.free(bytes);
 
-        const img = try utils.ImageMagick.decode_jpg(bytes);
+        const img = try utils.ImageMagick.decode_jpg(bytes, .unorm);
         return img;
     }
 };

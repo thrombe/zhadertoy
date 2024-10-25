@@ -518,23 +518,33 @@ pub const ImageMagick = struct {
         @cInclude("MagickWand/MagickWand.h");
     });
 
-    pub const Pixel = extern struct {
-        r: f32,
-        g: f32,
-        b: f32,
-        a: f32,
-    };
-    pub const Image = struct {
-        buffer: []Pixel,
-        height: usize,
-        width: usize,
+    pub fn Pixel(typ: type) type {
+        return extern struct {
+            r: typ,
+            g: typ,
+            b: typ,
+            a: typ,
+        };
+    }
+    pub fn Image(pix: type) type {
+        return struct {
+            buffer: []pix,
+            height: usize,
+            width: usize,
 
-        pub fn deinit(self: *@This()) void {
-            allocator.free(self.buffer);
-        }
-    };
+            pub fn deinit(self: *@This()) void {
+                allocator.free(self.buffer);
+            }
+        };
+    }
 
-    pub fn decode_jpg(bytes: []u8) !Image {
+    pub const FloatImage = Image(Pixel(f32));
+    pub const UnormImage = Image(Pixel(u8));
+
+    pub fn decode_jpg(bytes: []u8, comptime typ: enum { unorm, float }) !(switch (typ) {
+        .unorm => Image(Pixel(u8)),
+        .float => Image(Pixel(f32)),
+    }) {
         magick.MagickWandGenesis();
         const wand = magick.NewMagickWand() orelse {
             return error.CouldNotGetWand;
@@ -559,7 +569,10 @@ pub const ImageMagick = struct {
         const img_width = magick.MagickGetImageWidth(wand);
         const img_height = magick.MagickGetImageHeight(wand);
 
-        const buffer = try allocator.alloc(Pixel, img_width * img_height);
+        const buffer = try allocator.alloc(Pixel(switch (typ) {
+            .unorm => u8,
+            .float => f32,
+        }), img_width * img_height);
         errdefer allocator.free(buffer);
 
         if (magick.MagickExportImagePixels(
@@ -569,7 +582,10 @@ pub const ImageMagick = struct {
             img_width,
             img_height,
             "RGBA",
-            magick.FloatPixel,
+            switch (typ) {
+                .unorm => magick.CharPixel,
+                .float => magick.FloatPixel,
+            },
             buffer.ptr,
         ) == magick.MagickFalse) {
             return error.CouldNotRenderToBuffer;
