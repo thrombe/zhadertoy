@@ -539,10 +539,12 @@ pub const ImageMagick = struct {
     }
 
     pub const FloatImage = Image(Pixel(f32));
+    pub const HalfImage = Image(Pixel(f16));
     pub const UnormImage = Image(Pixel(u8));
 
-    pub fn decode_jpg(bytes: []u8, comptime typ: enum { unorm, float }) !(switch (typ) {
+    pub fn decode_jpg(bytes: []u8, comptime typ: enum { unorm, half, float }) !(switch (typ) {
         .unorm => Image(Pixel(u8)),
+        .half => Image(Pixel(f16)),
         .float => Image(Pixel(f32)),
     }) {
         magick.MagickWandGenesis();
@@ -571,6 +573,7 @@ pub const ImageMagick = struct {
 
         const buffer = try allocator.alloc(Pixel(switch (typ) {
             .unorm => u8,
+            .half => f32,
             .float => f32,
         }), img_width * img_height);
         errdefer allocator.free(buffer);
@@ -584,6 +587,7 @@ pub const ImageMagick = struct {
             "RGBA",
             switch (typ) {
                 .unorm => magick.CharPixel,
+                .half => magick.FloatPixel,
                 .float => magick.FloatPixel,
             },
             buffer.ptr,
@@ -591,10 +595,31 @@ pub const ImageMagick = struct {
             return error.CouldNotRenderToBuffer;
         }
 
-        return .{
-            .buffer = buffer,
-            .height = img_height,
-            .width = img_width,
-        };
+        switch (typ) {
+            .half => {
+                const half = try allocator.alloc(Pixel(f16), img_width * img_height);
+                for (buffer, 0..) |v, i| {
+                    half[i] = .{
+                        .r = @floatCast(v.r),
+                        .g = @floatCast(v.g),
+                        .b = @floatCast(v.b),
+                        .a = @floatCast(v.a),
+                    };
+                }
+                allocator.free(buffer);
+                return .{
+                    .buffer = half,
+                    .height = img_height,
+                    .width = img_width,
+                };
+            },
+            else => {
+                return .{
+                    .buffer = buffer,
+                    .height = img_height,
+                    .width = img_width,
+                };
+            },
+        }
     }
 };
