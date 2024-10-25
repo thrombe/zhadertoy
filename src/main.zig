@@ -380,7 +380,7 @@ pub const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba8_unorm, shader);
+                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba16_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -499,7 +499,7 @@ pub const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, bind.layout, .rgba8_unorm, shader);
+                var pipeline = try create_pipeline(device, bind.layout, .rgba16_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -765,16 +765,17 @@ pub const Renderer = struct {
                             .render_attachment = true,
                         },
                         .format = format,
-                        // .view_format = &[_]_{},
+                        // .view_format = &[_]gpu.Texture.Format{ .rgba8_unorm, .rgba32_float },
                     });
                     const tex = device.createTexture(&tex_desc);
                     return .{
                         .texture = tex,
                         .view = tex.createView(&.{}),
+                        // .view = tex.createView(&.{ .format = .rgba16_float }),
                     };
                 }
 
-                fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.UnormImage, label: [:0]const u8) @This() {
+                fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.HalfImage, label: [:0]const u8) @This() {
                     const size = gpu.Extent3D{
                         .width = @intCast(img.width),
                         .height = @intCast(img.height),
@@ -787,7 +788,8 @@ pub const Renderer = struct {
                             .copy_dst = true,
                             .texture_binding = true,
                         },
-                        .format = .rgba8_unorm,
+                        .format = .rgba16_float,
+                        // .view_formats = &[_]gpu.Texture.Format{ .rgba8_unorm, .rgba16_float },
                     });
                     const tex = device.createTexture(&tex_desc);
 
@@ -798,7 +800,7 @@ pub const Renderer = struct {
                     queue.writeTexture(&.{
                         .texture = tex,
                     }, &.{
-                        .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(u8)) * size.width,
+                        .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(f16)) * size.width,
                         .rows_per_image = size.height,
                     }, &size, img.buffer);
 
@@ -909,14 +911,14 @@ pub const Renderer = struct {
 
             fn init(device: *gpu.Device, queue: *gpu.Queue, size: gpu.Extent3D, at: *Shadertoy.ActiveToy) @This() {
                 return .{
-                    .bufferA = Channel.init(device, size, .rgba8_unorm, "buffer A"),
-                    .bufferB = Channel.init(device, size, .rgba8_unorm, "buffer B"),
-                    .bufferC = Channel.init(device, size, .rgba8_unorm, "buffer C"),
-                    .bufferD = Channel.init(device, size, .rgba8_unorm, "buffer D"),
-                    .keyboard = Channel.Tex.init(device, size, .rgba8_unorm, "keyboard buffer"),
-                    .sound = Channel.Tex.init(device, size, .rgba8_unorm, "sound buffer"),
-                    .screen = Sampled.init(device, size, .rgba8_unorm, "screen buffer"),
-                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba8_unorm, "empty buffer"),
+                    .bufferA = Channel.init(device, size, .rgba16_float, "buffer A"),
+                    .bufferB = Channel.init(device, size, .rgba16_float, "buffer B"),
+                    .bufferC = Channel.init(device, size, .rgba16_float, "buffer C"),
+                    .bufferD = Channel.init(device, size, .rgba16_float, "buffer D"),
+                    .keyboard = Channel.Tex.init(device, size, .rgba16_float, "keyboard buffer"),
+                    .sound = Channel.Tex.init(device, size, .rgba16_float, "sound buffer"),
+                    .screen = Sampled.init(device, size, .rgba16_float, "screen buffer"),
+                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba16_float, "empty buffer"),
                     .textures = TextureMap.init(device, queue, at),
                 };
             }
