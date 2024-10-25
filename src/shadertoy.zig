@@ -218,7 +218,7 @@ pub const ToyMan = struct {
                                 .vert = vert,
                                 .screen = screen,
                                 .image = image,
-                                .toy = at.clone(),
+                                .toy = try at.clone(),
                             };
                         };
                         errdefer compiled.deinit();
@@ -543,7 +543,7 @@ pub const ToyMan = struct {
         const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
         self.active_toy.* = active;
-        try self.compiler.ctx.toy_chan.send(active.clone());
+        try self.compiler.ctx.toy_chan.send(try active.clone());
 
         try self.shader_fuse.restart(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
@@ -563,7 +563,7 @@ pub const ToyMan = struct {
         const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
         self.active_toy.deinit();
         self.active_toy.* = active;
-        try self.compiler.ctx.toy_chan.send(active.clone());
+        try self.compiler.ctx.toy_chan.send(try active.clone());
 
         try self.shader_fuse.restart(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
@@ -705,7 +705,20 @@ pub const ActiveToy = struct {
         Buf: Buf,
         keyboard,
         music,
-        texture,
+        texture: struct {
+            name: [:0]const u8,
+            img: utils.ImageMagick.UnormImage,
+        },
+
+        pub fn deinit(self: *@This()) void {
+            switch (self.*) {
+                .texture => |*tex| {
+                    allocator.free(tex.name);
+                    tex.img.deinit();
+                },
+                else => {},
+            }
+        }
     };
     pub const Sampler = Toy.Sampler;
     pub const Input = struct {
@@ -723,8 +736,15 @@ pub const ActiveToy = struct {
                 },
                 .texture => {
                     var img = try cache.media_img(input.src);
-                    img.deinit();
-                    return .{ .typ = .texture, .sampler = input.sampler };
+                    errdefer img.deinit();
+                    const name = try allocator.dupeZ(u8, input.src);
+                    errdefer allocator.free(name);
+                    return .{ .typ = .{
+                        .texture = .{
+                            .img = img,
+                            .name = name,
+                        },
+                    }, .sampler = input.sampler };
                 },
                 .keyboard => {
                     return .{ .typ = .keyboard, .sampler = input.sampler };
@@ -743,6 +763,22 @@ pub const ActiveToy = struct {
             if (std.meta.eql(self.typ, .{ .Buf = typ })) {
                 self.from_current_frame = true;
             }
+        }
+
+        fn clone(self: *const @This()) !@This() {
+            var this = self.*;
+            switch (this.typ) {
+                .texture => |*tex| {
+                    tex.img.buffer = try allocator.dupe(utils.ImageMagick.Pixel(u8), tex.img.buffer);
+                    tex.name = try allocator.dupeZ(u8, tex.name);
+                },
+                else => {},
+            }
+            return this;
+        }
+
+        fn deinit(self: *@This()) void {
+            self.typ.deinit();
         }
     };
     pub const Inputs = struct {
@@ -778,13 +814,49 @@ pub const ActiveToy = struct {
             if (self.input3) |*inp| inp.mark_current_frame_input(typ);
             if (self.input4) |*inp| inp.mark_current_frame_input(typ);
         }
+
+        fn clone(self: *const @This()) !@This() {
+            var this = self.*;
+            this.input1 = null;
+            this.input2 = null;
+            this.input3 = null;
+            this.input4 = null;
+            errdefer this.deinit();
+
+            if (self.input1) |inp| {
+                this.input1 = try inp.clone();
+            }
+            if (self.input2) |inp| {
+                this.input2 = try inp.clone();
+            }
+            if (self.input3) |inp| {
+                this.input3 = try inp.clone();
+            }
+            if (self.input4) |inp| {
+                this.input4 = try inp.clone();
+            }
+            return this;
+        }
+
+        fn deinit(self: *@This()) void {
+            if (self.input1) |*inp| inp.deinit();
+            if (self.input2) |*inp| inp.deinit();
+            if (self.input3) |*inp| inp.deinit();
+            if (self.input4) |*inp| inp.deinit();
+        }
     };
     pub const BufferPass = struct {
         output: Buf,
         inputs: Inputs,
 
+        fn clone(self: *const @This()) !@This() {
+            var this = self.*;
+            this.inputs = try self.inputs.clone();
+            return this;
+        }
+
         fn deinit(self: *@This()) void {
-            _ = self;
+            self.inputs.deinit();
         }
     };
 
@@ -792,6 +864,10 @@ pub const ActiveToy = struct {
     passes: struct {
         image: struct {
             inputs: Inputs = .{},
+
+            fn deinit(self: *@This()) void {
+                self.inputs.deinit();
+            }
         } = .{},
         buffer1: ?BufferPass = null,
         buffer2: ?BufferPass = null,
@@ -835,11 +911,30 @@ pub const ActiveToy = struct {
         }
     }
 
-    pub fn clone(self: *const @This()) @This() {
-        return self.*;
+    pub fn clone(self: *const @This()) !@This() {
+        var this = self.*;
+        this.passes = .{};
+        errdefer this.deinit();
+
+        this.passes.image.inputs = try self.passes.image.inputs.clone();
+        if (self.passes.buffer1) |pass| {
+            this.passes.buffer1 = try pass.clone();
+        }
+        if (self.passes.buffer2) |pass| {
+            this.passes.buffer2 = try pass.clone();
+        }
+        if (self.passes.buffer3) |pass| {
+            this.passes.buffer3 = try pass.clone();
+        }
+        if (self.passes.buffer4) |pass| {
+            this.passes.buffer4 = try pass.clone();
+        }
+
+        return this;
     }
 
     pub fn deinit(self: *@This()) void {
+        self.passes.image.deinit();
         if (self.passes.buffer1) |*buf| buf.deinit();
         if (self.passes.buffer2) |*buf| buf.deinit();
         if (self.passes.buffer3) |*buf| buf.deinit();

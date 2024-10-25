@@ -407,15 +407,33 @@ pub const Renderer = struct {
         };
         const Pass = struct {
             const Input = struct {
+                // OOF: FIXME: typ is not owned. but there's no indication/care given about it.
                 typ: Shadertoy.ActiveToy.Buffer,
                 sampler: *gpu.Sampler,
 
                 fn init(device: *gpu.Device, input: ?Shadertoy.ActiveToy.Input) ?@This() {
-                    // TODO: use input.?.sampler
                     if (input) |inp| {
+                        const wrap: gpu.Sampler.AddressMode = switch (inp.sampler.wrap) {
+                            .clamp => .clamp_to_edge,
+                            .repeat => .repeat,
+                        };
+                        const filter: gpu.FilterMode = switch (inp.sampler.filter) {
+                            .nearest => .nearest,
+                            // TODO:
+                            // .linear => .linear,
+                            .linear => .nearest,
+                            .mipmap => .nearest,
+                        };
                         return .{
                             .typ = inp.typ,
-                            .sampler = device.createSampler(&.{}),
+                            .sampler = device.createSampler(&.{
+                                .address_mode_u = wrap,
+                                .address_mode_v = wrap,
+                                .address_mode_w = wrap,
+                                .mag_filter = filter,
+                                .min_filter = filter,
+                                // .mipmap_filter = .nearest,
+                            }),
                         };
                     } else {
                         return null;
@@ -743,6 +761,40 @@ pub const Renderer = struct {
                     };
                 }
 
+                fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.UnormImage, label: [:0]const u8) @This() {
+                    const size = gpu.Extent3D{
+                        .width = @intCast(img.width),
+                        .height = @intCast(img.height),
+                    };
+                    const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .label = label,
+                        .size = size,
+                        .dimension = .dimension_2d,
+                        .usage = .{
+                            .copy_dst = true,
+                            .texture_binding = true,
+                        },
+                        .format = .rgba8_unorm,
+                    });
+                    const tex = device.createTexture(&tex_desc);
+
+                    // TODO: vflip
+                    // - can handle vflip for everything just using shaders ig :/
+                    //    - create a new struct (custom type). override all texture functions
+                    //      and pass vflip as uniform
+                    queue.writeTexture(&.{
+                        .texture = tex,
+                    }, &.{
+                        .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(u8)) * size.width,
+                        .rows_per_image = size.height,
+                    }, &size, img.buffer);
+
+                    return .{
+                        .texture = tex,
+                        .view = tex.createView(&.{}),
+                    };
+                }
+
                 fn release(self: *@This()) void {
                     self.view.release();
                     self.texture.destroy();
@@ -784,17 +836,65 @@ pub const Renderer = struct {
                     self.sampler.release();
                 }
             };
+            const TextureMap = struct {
+                hm: std.StringHashMap(Channel.Tex),
+
+                fn init(device: *gpu.Device, queue: *gpu.Queue, at: *Shadertoy.ActiveToy) @This() {
+                    const hm = std.StringHashMap(Channel.Tex).init(allocator);
+                    var self = @This(){
+                        .hm = hm,
+                    };
+                    self.insert_textures(device, queue, &at.passes.image.inputs);
+                    if (at.passes.buffer1) |*buf| self.insert_textures(device, queue, &buf.inputs);
+                    if (at.passes.buffer2) |*buf| self.insert_textures(device, queue, &buf.inputs);
+                    if (at.passes.buffer3) |*buf| self.insert_textures(device, queue, &buf.inputs);
+                    if (at.passes.buffer4) |*buf| self.insert_textures(device, queue, &buf.inputs);
+                    return self;
+                }
+
+                fn insert_textures(self: *@This(), device: *gpu.Device, queue: *gpu.Queue, inputs: *Shadertoy.ActiveToy.Inputs) void {
+                    if (inputs.input1) |*inp| self.insert_texture(device, queue, inp);
+                    if (inputs.input2) |*inp| self.insert_texture(device, queue, inp);
+                    if (inputs.input3) |*inp| self.insert_texture(device, queue, inp);
+                    if (inputs.input4) |*inp| self.insert_texture(device, queue, inp);
+                }
+
+                fn insert_texture(self: *@This(), device: *gpu.Device, queue: *gpu.Queue, input: *Shadertoy.ActiveToy.Input) void {
+                    switch (input.typ) {
+                        .texture => |*tex| {
+                            // MEH: don't really want to deal with allocation falures here
+                            // better solution would be using a big enough arena allocator
+                            const res = self.hm.getOrPut(tex.name) catch unreachable;
+                            if (!res.found_existing) {
+                                res.key_ptr.* = allocator.dupe(u8, tex.name) catch unreachable;
+                                res.value_ptr.* = Channel.Tex.from_img(device, queue, &tex.img, tex.name);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+
+                fn release(self: *@This()) void {
+                    var it = self.hm.iterator();
+                    while (it.next()) |val| {
+                        allocator.free(val.key_ptr.*);
+                        val.value_ptr.*.release();
+                    }
+                    self.hm.deinit();
+                }
+            };
             bufferA: Channel,
             bufferB: Channel,
             bufferC: Channel,
             bufferD: Channel,
             keyboard: Channel.Tex,
             sound: Channel.Tex,
+            textures: TextureMap,
 
             screen: Sampled,
             empty_input: Sampled,
 
-            fn init(device: *gpu.Device, size: gpu.Extent3D) @This() {
+            fn init(device: *gpu.Device, queue: *gpu.Queue, size: gpu.Extent3D, at: *Shadertoy.ActiveToy) @This() {
                 return .{
                     .bufferA = Channel.init(device, size, "buffer A"),
                     .bufferB = Channel.init(device, size, "buffer B"),
@@ -804,6 +904,7 @@ pub const Renderer = struct {
                     .sound = Channel.Tex.init(device, size, .rgba8_unorm, "sound buffer"),
                     .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
                     .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float, "empty buffer"),
+                    .textures = TextureMap.init(device, queue, at),
                 };
             }
 
@@ -816,6 +917,7 @@ pub const Renderer = struct {
                 self.sound.release();
                 self.screen.release();
                 self.empty_input.release();
+                self.textures.release();
             }
 
             fn get_current(self: *@This(), buf: Shadertoy.ActiveToy.Buffer) *Channel.Tex {
@@ -828,9 +930,7 @@ pub const Renderer = struct {
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
-
-                    // TODO:
-                    .texture => return &self.empty_input.tex,
+                    .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
                 }
             }
 
@@ -844,9 +944,7 @@ pub const Renderer = struct {
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
-
-                    // TODO:
-                    .texture => return &self.empty_input.tex,
+                    .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
                 }
             }
 
@@ -893,7 +991,7 @@ pub const Renderer = struct {
             // TODO:
             // try binding.init(@tagName(name), device, allocator);
 
-            var buffers = Buffers.init(device, size);
+            var buffers = Buffers.init(device, core.queue, size, at);
             errdefer buffers.release();
 
             const vert = try compiler.ctx.compile_vert();
@@ -959,7 +1057,7 @@ pub const Renderer = struct {
             defer comp.mutex.unlock();
 
             if (comp.input_fuse.unfuse()) {
-                self.resize(device);
+                self.resize(device, core.queue, &comp.toy);
             }
 
             if (comp.uniform_reset_fuse.unfuse()) {
@@ -996,12 +1094,12 @@ pub const Renderer = struct {
             self.pass = new;
         }
 
-        fn resize(self: *@This(), device: *gpu.Device) void {
+        fn resize(self: *@This(), device: *gpu.Device, queue: *gpu.Queue, at: *Shadertoy.ActiveToy) void {
             self.buffers.release();
-            self.buffers = Buffers.init(device, .{
+            self.buffers = Buffers.init(device, queue, .{
                 .width = self.uniforms.uniforms.val.width,
                 .height = self.uniforms.uniforms.val.height,
-            });
+            }, at);
         }
 
         fn swap(self: *@This()) void {
