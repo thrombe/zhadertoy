@@ -311,7 +311,7 @@ pub const Renderer = struct {
                 try layout_entries.append(alloc, gpu.BindGroupLayout.Entry.texture(
                     @intCast(layout_entries.items.len),
                     visibility,
-                    .unfilterable_float,
+                    .float,
                     .dimension_2d,
                     false,
                 ));
@@ -319,7 +319,7 @@ pub const Renderer = struct {
                 try layout_entries.append(alloc, gpu.BindGroupLayout.Entry.sampler(
                     @intCast(layout_entries.items.len),
                     visibility,
-                    .non_filtering,
+                    .filtering,
                 ));
                 try bind_group_entries.append(alloc, gpu.BindGroup.Entry.sampler(@intCast(bind_group_entries.items.len), sampler));
 
@@ -374,13 +374,13 @@ pub const Renderer = struct {
 
                 var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
                 errdefer inputs.release();
-                var bind = try Pass.create_bind_group(device, binding, channels, &inputs, &at.passes.image.inputs);
+                var bind = try Pass.create_bind_group(device, binding, channels, &inputs);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba32_float, shader);
+                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba8_unorm, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -408,8 +408,10 @@ pub const Renderer = struct {
         const Pass = struct {
             const Input = struct {
                 // OOF: FIXME: typ is not owned. but there's no indication/care given about it.
+                //  maybe just store a key into a hashmap stored in ActiveToy to avoid big 'typ'
                 typ: Shadertoy.ActiveToy.Buffer,
                 sampler: *gpu.Sampler,
+                info: Shadertoy.ActiveToy.Input,
 
                 fn init(device: *gpu.Device, input: ?Shadertoy.ActiveToy.Input) ?@This() {
                     if (input) |inp| {
@@ -419,10 +421,13 @@ pub const Renderer = struct {
                         };
                         const filter: gpu.FilterMode = switch (inp.sampler.filter) {
                             .nearest => .nearest,
-                            // TODO:
-                            // .linear => .linear,
-                            .linear => .nearest,
-                            .mipmap => .nearest,
+                            .linear => .linear,
+                            .mipmap => .linear,
+                        };
+                        const mipmap_filter: gpu.MipmapFilterMode = switch (inp.sampler.filter) {
+                            .nearest => .nearest,
+                            .linear => .linear,
+                            .mipmap => .linear,
                         };
                         return .{
                             .typ = inp.typ,
@@ -432,8 +437,9 @@ pub const Renderer = struct {
                                 .address_mode_w = wrap,
                                 .mag_filter = filter,
                                 .min_filter = filter,
-                                // .mipmap_filter = .nearest,
+                                .mipmap_filter = mipmap_filter,
                             }),
+                            .info = inp,
                         };
                     } else {
                         return null;
@@ -487,13 +493,13 @@ pub const Renderer = struct {
                 const device = core.device;
 
                 var inputs = Inputs.init(device, &pass.inputs);
-                var bind = try create_bind_group(device, binding, channels, &inputs, &pass.inputs);
+                var bind = try create_bind_group(device, binding, channels, &inputs);
                 errdefer {
                     bind.group1.release();
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, bind.layout, .rgba32_float, shader);
+                var pipeline = try create_pipeline(device, bind.layout, .rgba8_unorm, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -513,7 +519,6 @@ pub const Renderer = struct {
                 binding: *Binding,
                 _buffers: *Buffers,
                 _inputs: *Inputs,
-                _at_inputs: *Shadertoy.ActiveToy.Inputs,
             ) !struct { group1: *gpu.BindGroup, group2: *gpu.BindGroup, layout: *gpu.BindGroupLayout } {
                 const alloc = allocator;
                 var layout_entries = std.ArrayListUnmanaged(gpu.BindGroupLayout.Entry){};
@@ -538,11 +543,15 @@ pub const Renderer = struct {
                         .compute = true,
                     };
 
-                    fn add(self: *@This(), view: *gpu.TextureView, sampler: *gpu.Sampler) !void {
+                    fn add(self: *@This(), view: *gpu.TextureView, sampler: *gpu.Sampler, info: ?Shadertoy.ActiveToy.Input) !void {
                         try self.layouts.append(self.alloc, gpu.BindGroupLayout.Entry.texture(
                             @intCast(self.layouts.items.len),
                             visibility,
-                            .unfilterable_float,
+                            if (info) |i| switch (i.sampler.filter) {
+                                .nearest => .float,
+                                .linear => .float,
+                                .mipmap => .float,
+                            } else .float,
                             .dimension_2d,
                             false,
                         ));
@@ -550,35 +559,39 @@ pub const Renderer = struct {
                         try self.layouts.append(self.alloc, gpu.BindGroupLayout.Entry.sampler(
                             @intCast(self.layouts.items.len),
                             visibility,
-                            .non_filtering,
+                            if (info) |i| switch (i.sampler.filter) {
+                                .nearest => .filtering,
+                                .linear => .filtering,
+                                .mipmap => .filtering,
+                            } else .filtering,
                         ));
                         try self.groups.append(self.alloc, gpu.BindGroup.Entry.sampler(@intCast(self.groups.items.len), sampler));
                     }
 
-                    fn add_all(self: *@This(), buffers: *Buffers, inputs: *Inputs, at_inputs: *Shadertoy.ActiveToy.Inputs, swap_tex: bool) !void {
+                    fn add_all(self: *@This(), buffers: *Buffers, inputs: *Inputs, swap_tex: bool) !void {
                         if (inputs.input1) |inp| {
-                            const tex = if (swap_tex != at_inputs.input1.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
-                            try self.add(tex.view, inp.sampler);
+                            const tex = if (swap_tex != inp.info.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler, inp.info);
                         } else {
-                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler, null);
                         }
                         if (inputs.input2) |inp| {
-                            const tex = if (swap_tex != at_inputs.input2.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
-                            try self.add(tex.view, inp.sampler);
+                            const tex = if (swap_tex != inp.info.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler, inp.info);
                         } else {
-                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler, null);
                         }
                         if (inputs.input3) |inp| {
-                            const tex = if (swap_tex != at_inputs.input3.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
-                            try self.add(tex.view, inp.sampler);
+                            const tex = if (swap_tex != inp.info.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler, inp.info);
                         } else {
-                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler, null);
                         }
                         if (inputs.input4) |inp| {
-                            const tex = if (swap_tex != at_inputs.input4.?.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
-                            try self.add(tex.view, inp.sampler);
+                            const tex = if (swap_tex != inp.info.from_current_frame) buffers.get_current(inp.typ) else buffers.get_last_frame(inp.typ);
+                            try self.add(tex.view, inp.sampler, inp.info);
                         } else {
-                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler);
+                            try self.add(buffers.empty_input.tex.view, buffers.empty_input.sampler, null);
                         }
                     }
                 };
@@ -592,7 +605,7 @@ pub const Renderer = struct {
                     fnn1.layouts.deinit(alloc);
                     fnn1.groups.deinit(alloc);
                 }
-                try fnn1.add_all(_buffers, _inputs, _at_inputs, false);
+                try fnn1.add_all(_buffers, _inputs, false);
 
                 const bind_group_layout = device.createBindGroupLayout(
                     &gpu.BindGroupLayout.Descriptor.init(.{
@@ -617,7 +630,7 @@ pub const Renderer = struct {
                     fnn2.layouts.deinit(alloc);
                     fnn2.groups.deinit(alloc);
                 }
-                try fnn2.add_all(_buffers, _inputs, _at_inputs, true);
+                try fnn2.add_all(_buffers, _inputs, true);
 
                 const bind_group2 = device.createBindGroup(
                     &gpu.BindGroup.Descriptor.init(.{
@@ -803,10 +816,10 @@ pub const Renderer = struct {
             current: Tex,
             last_frame: Tex,
 
-            fn init(device: *gpu.Device, size: gpu.Extent3D, comptime label: [:0]const u8) @This() {
+            fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
                 return .{
-                    .current = Tex.init(device, size, .rgba32_float, "current " ++ label),
-                    .last_frame = Tex.init(device, size, .rgba32_float, "last frame " ++ label),
+                    .current = Tex.init(device, size, format, "current " ++ label),
+                    .last_frame = Tex.init(device, size, format, "last frame " ++ label),
                 };
             }
 
@@ -896,14 +909,14 @@ pub const Renderer = struct {
 
             fn init(device: *gpu.Device, queue: *gpu.Queue, size: gpu.Extent3D, at: *Shadertoy.ActiveToy) @This() {
                 return .{
-                    .bufferA = Channel.init(device, size, "buffer A"),
-                    .bufferB = Channel.init(device, size, "buffer B"),
-                    .bufferC = Channel.init(device, size, "buffer C"),
-                    .bufferD = Channel.init(device, size, "buffer D"),
+                    .bufferA = Channel.init(device, size, .rgba8_unorm, "buffer A"),
+                    .bufferB = Channel.init(device, size, .rgba8_unorm, "buffer B"),
+                    .bufferC = Channel.init(device, size, .rgba8_unorm, "buffer C"),
+                    .bufferD = Channel.init(device, size, .rgba8_unorm, "buffer D"),
                     .keyboard = Channel.Tex.init(device, size, .rgba8_unorm, "keyboard buffer"),
                     .sound = Channel.Tex.init(device, size, .rgba8_unorm, "sound buffer"),
-                    .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
-                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float, "empty buffer"),
+                    .screen = Sampled.init(device, size, .rgba8_unorm, "screen buffer"),
+                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba8_unorm, "empty buffer"),
                     .textures = TextureMap.init(device, queue, at),
                 };
             }
