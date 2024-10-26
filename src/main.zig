@@ -380,7 +380,7 @@ pub const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba16_float, shader);
+                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba32_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -499,7 +499,7 @@ pub const Renderer = struct {
                     bind.group2.release();
                     bind.layout.release();
                 }
-                var pipeline = try create_pipeline(device, bind.layout, .rgba16_float, shader);
+                var pipeline = try create_pipeline(device, bind.layout, .rgba32_float, shader);
                 errdefer pipeline.release();
 
                 return .{
@@ -548,10 +548,10 @@ pub const Renderer = struct {
                             @intCast(self.layouts.items.len),
                             visibility,
                             if (info) |i| switch (i.sampler.filter) {
-                                .nearest => .float,
+                                .nearest => .unfilterable_float,
                                 .linear => .float,
                                 .mipmap => .float,
-                            } else .float,
+                            } else .unfilterable_float,
                             .dimension_2d,
                             false,
                         ));
@@ -560,10 +560,10 @@ pub const Renderer = struct {
                             @intCast(self.layouts.items.len),
                             visibility,
                             if (info) |i| switch (i.sampler.filter) {
-                                .nearest => .filtering,
+                                .nearest => .non_filtering,
                                 .linear => .filtering,
                                 .mipmap => .filtering,
-                            } else .filtering,
+                            } else .non_filtering,
                         ));
                         try self.groups.append(self.alloc, gpu.BindGroup.Entry.sampler(@intCast(self.groups.items.len), sampler));
                     }
@@ -775,7 +775,7 @@ pub const Renderer = struct {
                     };
                 }
 
-                fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.HalfImage, label: [:0]const u8) @This() {
+                fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.FloatImage, label: [:0]const u8) @This() {
                     const size = gpu.Extent3D{
                         .width = @intCast(img.width),
                         .height = @intCast(img.height),
@@ -788,7 +788,7 @@ pub const Renderer = struct {
                             .copy_dst = true,
                             .texture_binding = true,
                         },
-                        .format = .rgba16_float,
+                        .format = .rgba32_float,
                         // .view_formats = &[_]gpu.Texture.Format{ .rgba8_unorm, .rgba16_float },
                     });
                     const tex = device.createTexture(&tex_desc);
@@ -800,7 +800,7 @@ pub const Renderer = struct {
                     queue.writeTexture(&.{
                         .texture = tex,
                     }, &.{
-                        .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(f16)) * size.width,
+                        .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(f32)) * size.width,
                         .rows_per_image = size.height,
                     }, &size, img.buffer);
 
@@ -911,14 +911,14 @@ pub const Renderer = struct {
 
             fn init(device: *gpu.Device, queue: *gpu.Queue, size: gpu.Extent3D, at: *Shadertoy.ActiveToy) @This() {
                 return .{
-                    .bufferA = Channel.init(device, size, .rgba16_float, "buffer A"),
-                    .bufferB = Channel.init(device, size, .rgba16_float, "buffer B"),
-                    .bufferC = Channel.init(device, size, .rgba16_float, "buffer C"),
-                    .bufferD = Channel.init(device, size, .rgba16_float, "buffer D"),
-                    .keyboard = Channel.Tex.init(device, size, .rgba16_float, "keyboard buffer"),
-                    .sound = Channel.Tex.init(device, size, .rgba16_float, "sound buffer"),
-                    .screen = Sampled.init(device, size, .rgba16_float, "screen buffer"),
-                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba16_float, "empty buffer"),
+                    .bufferA = Channel.init(device, size, .rgba32_float, "buffer A"),
+                    .bufferB = Channel.init(device, size, .rgba32_float, "buffer B"),
+                    .bufferC = Channel.init(device, size, .rgba32_float, "buffer C"),
+                    .bufferD = Channel.init(device, size, .rgba32_float, "buffer D"),
+                    .keyboard = Channel.Tex.init(device, size, .rgba32_float, "keyboard buffer"),
+                    .sound = Channel.Tex.init(device, size, .rgba32_float, "sound buffer"),
+                    .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
+                    .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float, "empty buffer"),
                     .textures = TextureMap.init(device, queue, at),
                 };
             }
@@ -1439,7 +1439,33 @@ const App = struct {
         renderer_mod: *Renderer.Mod,
         gui_mod: *Gui.Mod,
     ) !void {
-        core_mod.schedule(.init);
+        // NOTE: this code is core_mod.init
+        {
+            const core: *mach.Core = core_mod.state();
+            try mach.core.init(.{
+                .display_mode = if (core_mod.get(core.main_window, .fullscreen).?) .fullscreen else .windowed,
+                .size = .{
+                    .width = core_mod.get(core.main_window, .width).?,
+                    .height = core_mod.get(core.main_window, .height).?,
+                },
+                .power_preference = .high_performance,
+                .required_features = &[_]gpu.FeatureName{
+                    // - [dawn float32 filtering](https://developer.chrome.com/blog/new-in-webgpu-119)
+                    .float32_filterable,
+                },
+            });
+
+            try core_mod.set(core.main_window, .framebuffer_format, mach.core.descriptor.format);
+            try core_mod.set(core.main_window, .framebuffer_width, mach.core.descriptor.width);
+            try core_mod.set(core.main_window, .framebuffer_height, mach.core.descriptor.height);
+            try core_mod.set(core.main_window, .width, mach.core.size().width);
+            try core_mod.set(core.main_window, .height, mach.core.size().height);
+
+            core.allocator = mach.core.allocator;
+            core.device = mach.core.device;
+            core.queue = mach.core.device.getQueue();
+        }
+        // core_mod.schedule(.init);
         defer core_mod.schedule(.start);
 
         // NOTE: initialize after core

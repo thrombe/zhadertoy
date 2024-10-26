@@ -707,7 +707,7 @@ pub const ActiveToy = struct {
         music,
         texture: struct {
             name: [:0]const u8,
-            img: utils.ImageMagick.HalfImage,
+            img: utils.ImageMagick.FloatImage,
         },
 
         pub fn deinit(self: *@This()) void {
@@ -769,7 +769,7 @@ pub const ActiveToy = struct {
             var this = self.*;
             switch (this.typ) {
                 .texture => |*tex| {
-                    tex.img.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f16), tex.img.buffer);
+                    tex.img.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), tex.img.buffer);
                     tex.name = try allocator.dupeZ(u8, tex.name);
                 },
                 else => {},
@@ -1144,11 +1144,11 @@ pub const Cached = struct {
         return bytes;
     }
 
-    fn media_img(self: *@This(), media_path: []const u8) !utils.ImageMagick.HalfImage {
+    fn media_img(self: *@This(), media_path: []const u8) !utils.ImageMagick.FloatImage {
         const bytes = try self.media_bytes(media_path);
         defer allocator.free(bytes);
 
-        const img = try utils.ImageMagick.decode_jpg(bytes, .half);
+        const img = try utils.ImageMagick.decode_jpg(bytes, .float);
         return img;
     }
 };
