@@ -46,37 +46,60 @@ float iSampleRate = 4800.0;
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
 
+#define ZHADER_CHANNEL(index, binding1, binding2) \
+    layout(set = 0, binding = binding1) \
+    uniform texture2D zhader_channel_##index; \
+    layout(set = 0, binding = binding2) \
+    uniform sampler zhader_sampler_##index; \
+    struct ZhaderChannel##index { \
+        int a; \
+    }; \
+    ZhaderChannel##index iChannel##index; \
+    vec4 texture(ZhaderChannel##index chan, vec2 pos) { \
+        return texture(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
+    } \
+    vec4 textureProj(ZhaderChannel##index chan, vec4 pos) { \
+        return textureProj(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
+    } \
+    vec4 texelFetch(ZhaderChannel##index chan, ivec2 pos, int lod) { \
+        return texelFetch(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
+    } \
+    vec4 textureLod(ZhaderChannel##index chan, vec2 pos, float lod) { \
+        return textureLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
+    } \
+    vec4 textureGrad(ZhaderChannel##index chan, vec2 pos, vec2 dpdx, vec2 dpdy) { \
+        return textureGrad(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, dpdx, dpdy); \
+    } \
+    vec4 textureGather(ZhaderChannel##index chan, vec2 pos) { \
+        return textureGather(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
+    } \
+    ivec2 textureSize(ZhaderChannel##index chan, int lod) { \
+        return textureSize(sampler2D(zhader_channel_##index, zhader_sampler_##index), lod); \
+    } \
+    int textureQueryLevels(ZhaderChannel##index chan) { \
+        return textureQueryLevels(sampler2D(zhader_channel_##index, zhader_sampler_##index)); \
+    } \
+    vec2 textureQueryLod(ZhaderChannel##index chan, vec2 pos) { \
+        return textureQueryLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
+    }
+
 #ifdef ZHADER_CHANNEL0
-layout(set = 0, binding = 1)
-uniform texture2D iCChannel0;
-layout(set = 0, binding = 2)
-uniform sampler iSChannel0;
-#define iChannel0 sampler2D(iCChannel0, iSChannel0)
+ZHADER_CHANNEL(0, 1, 2)
 #endif // ZHADER_CHANNEL0
 
 #ifdef ZHADER_CHANNEL1
-layout(set = 0, binding = 3)
-uniform texture2D iCChannel1;
-layout(set = 0, binding = 4)
-uniform sampler iSChannel1;
-#define iChannel1 sampler2D(iCChannel1, iSChannel1)
+ZHADER_CHANNEL(1, 3, 4)
 #endif // ZHADER_CHANNEL1
 
 #ifdef ZHADER_CHANNEL2
-layout(set = 0, binding = 5)
-uniform texture2D iCChannel2;
-layout(set = 0, binding = 6)
-uniform sampler iSChannel2;
-#define iChannel2 sampler2D(iCChannel2, iSChannel2)
+ZHADER_CHANNEL(2, 5, 6)
 #endif // ZHADER_CHANNEL2
 
 #ifdef ZHADER_CHANNEL3
-layout(set = 0, binding = 7)
-uniform texture2D iCChannel3;
-layout(set = 0, binding = 8)
-uniform sampler iSChannel3;
-#define iChannel3 sampler2D(iCChannel3, iSChannel3)
+ZHADER_CHANNEL(3, 7, 8)
 #endif // ZHADER_CHANNEL3
+
+#undef ZHADER_CHANNEL
 
 #ifdef ZHADER_INCLUDE_SCREEN
 layout(set = 0, binding = 1)
