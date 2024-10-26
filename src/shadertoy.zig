@@ -540,7 +540,7 @@ pub const ToyMan = struct {
         const target = try std.fs.cwd().realpathAlloc(allocator, path);
         defer allocator.free(target);
 
-        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
+        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target, false);
         self.active_toy.deinit();
         self.active_toy.* = active;
         try self.compiler.ctx.toy_chan.send(try active.clone());
@@ -560,12 +560,29 @@ pub const ToyMan = struct {
         var toy = try Toy.from_file(toypath);
         defer toy.deinit();
 
-        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target);
+        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, target, false);
         self.active_toy.deinit();
         self.active_toy.* = active;
         try self.compiler.ctx.toy_chan.send(try active.clone());
 
         try self.shader_fuse.restart(config.paths.playground);
+        try self.shader_fuse.ctx.channel.send(.All);
+    }
+
+    pub fn reset_toy(self: *@This()) !void {
+        const toypath = try std.fs.path.join(allocator, &[_][]const u8{ self.playground, "toy.json" });
+        defer allocator.free(toypath);
+        var toy = try Toy.from_file(toypath);
+        defer toy.deinit();
+
+        self.shader_fuse.deinit();
+
+        const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, self.playground, true);
+        self.active_toy.deinit();
+        self.active_toy.* = active;
+        try self.compiler.ctx.toy_chan.send(try active.clone());
+
+        self.shader_fuse.* = try FsFuse.init(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
     }
 
@@ -578,14 +595,14 @@ pub const ToyMan = struct {
     //   - cube.glsl
     //   - buffer1A.glsl: where the '1' represents execution order of the buffers
     //       (shadertoy buffers ABCD can be in any order, but they execute in the order they are defined in)
-    pub fn prepare_toy(cache: *Cached, playground: []const u8, toy: *Toy, dir_path: []const u8) !ActiveToy {
-        var dir = try std.fs.openDirAbsolute(dir_path, .{ .no_follow = true });
+    pub fn prepare_toy(cache: *Cached, playground: []const u8, toy: *Toy, dir_path: []const u8, reset: bool) !ActiveToy {
+        var dir = try std.fs.openDirAbsolute(dir_path, .{});
         defer dir.close();
 
         // testing if frag exists to figure out if we need to prep or load the toy
         const prep = blk: {
             dir.access("frag.glsl", .{}) catch break :blk true;
-            break :blk false;
+            break :blk reset;
         };
 
         var t = ActiveToy{};
@@ -670,20 +687,22 @@ pub const ToyMan = struct {
             try frag.writeAll(frag_glsl);
         }
 
-        // ignore if path does not exist.
-        dir.deleteFile(playground) catch |e| {
-            switch (e) {
-                error.FileNotFound => {},
-                else => {
-                    return e;
-                },
-            }
-        };
-        try std.fs.symLinkAbsolute(
-            dir_path,
-            playground,
-            .{ .is_directory = true },
-        );
+        if (!std.mem.eql(u8, playground, dir_path)) {
+            // ignore if path does not exist.
+            dir.deleteFile(playground) catch |e| {
+                switch (e) {
+                    error.FileNotFound => {},
+                    else => {
+                        return e;
+                    },
+                }
+            };
+            try std.fs.symLinkAbsolute(
+                dir_path,
+                playground,
+                .{ .is_directory = true },
+            );
+        }
 
         t.mark_current_frame_inputs();
         return t;

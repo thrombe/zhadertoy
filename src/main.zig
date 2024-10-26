@@ -1668,12 +1668,12 @@ const Gui = struct {
                 imgui.text("Application average %.3f ms/frame (%.1f FPS)", 1000.0 / io.framerate, io.framerate);
                 if (imgui.collapsingHeader("shader compilation", imgui.TreeNodeFlags_None)) {
                     _ = imgui.checkbox("shader dump assembly", &renderer.config.shader_dump_assembly);
-                    _ = imgui.checkbox("pause shader", &renderer.config.pause_shader);
 
                     enum_checkbox(&renderer.config.shader_compile_opt, "shader compile opt mode");
                 }
 
                 if (imgui.collapsingHeader("toys", imgui.TreeNodeFlags_DefaultOpen)) {
+                    _ = imgui.checkbox("pause shader", &renderer.config.pause_shader);
                     pick_toy(renderer) catch |e| std.debug.print("{any}\n", .{e});
                 }
 
@@ -1733,6 +1733,10 @@ const Gui = struct {
     var input_buf = std.mem.zeroes([256:0]u8);
     var pick_toy_index: c_int = 0;
     fn pick_toy(renderer: *Renderer) !void {
+        if (imgui.button("reset shader")) {
+            try renderer.toyman.reset_toy();
+        }
+
         const toys = [_][*:0]const u8{
             "z:new: new yo",
             "z:nonuniform_control_flow: broken",
