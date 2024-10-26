@@ -1217,6 +1217,7 @@ pub const Renderer = struct {
         shader_dump_assembly: bool = false,
         pause_shader: bool = false,
         ignore_pause_fuse: Fuse = .{},
+        ignore_pause_fuse_swapped: Fuse = .{},
         resize_fuse: Fuse = .{},
         gpu_err_fuse: *GpuFuse,
     };
@@ -1315,8 +1316,14 @@ pub const Renderer = struct {
 
         self.pri.binding.update(encoder);
 
-        self.pri.swap();
-        if (!self.config.pause_shader or self.config.ignore_pause_fuse.unfuse()) {
+        var ignore = self.config.ignore_pause_fuse.unfuse();
+        if (ignore) {
+            _ = self.config.ignore_pause_fuse_swapped.fuse();
+        } else {
+            ignore = self.config.ignore_pause_fuse_swapped.unfuse();
+        }
+        if (!self.config.pause_shader or ignore) {
+            self.pri.swap();
             self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
         } else {
             self.pri.pass.screen.render(encoder, app.rendering_data.?.screen);
@@ -1365,10 +1372,10 @@ pub const Renderer = struct {
 
         for (app.events.items) |event| {
             switch (event) {
-                .mouse_motion => |pos| {
+                .mouse_motion => |mouse| {
                     if (state.mouse_left) {
-                        state.mouse_x = @floatCast(pos.pos.x);
-                        state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - pos.pos.y);
+                        state.mouse_x = @floatCast(mouse.pos.x);
+                        state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - mouse.pos.y);
                         state.mouse.x = state.mouse_x;
                         state.mouse.y = state.mouse_y;
                         _ = self.config.ignore_pause_fuse.fuse();
@@ -1389,6 +1396,11 @@ pub const Renderer = struct {
                         },
                         else => {},
                     }
+                    state.mouse_x = @floatCast(button.pos.x);
+                    state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - button.pos.y);
+                    state.mouse.x = state.mouse_x;
+                    state.mouse.y = state.mouse_y;
+                    _ = self.config.ignore_pause_fuse.fuse();
                 },
                 .mouse_release => |button| {
                     switch (button.button) {
@@ -1405,6 +1417,10 @@ pub const Renderer = struct {
                         },
                         else => {},
                     }
+                    state.mouse_x = @floatCast(button.pos.x);
+                    state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - button.pos.y);
+                    state.mouse.x = state.mouse_x;
+                    state.mouse.y = state.mouse_y;
                 },
                 .mouse_scroll => |del| {
                     _ = del;
