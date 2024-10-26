@@ -15,29 +15,24 @@ uniform vec3 iChannelResolution[4];
 uniform samplerXX iChanneli;
 */
 
-struct ZhaderUniforms {
-    float time;
-    float time_delta;
-    int frame;
-    int width;
-    int height;
-    float mouse_x;
-    float mouse_y;
-    bool mouse_left;
-    bool mouse_right;
-    bool mouse_middle;
-};
-
 layout(set = 0, binding = 0)
 uniform Uniforms {
-    ZhaderUniforms zhader_uniforms;
-};
+    float iTime;
+    float iTimeDelta;
+    int iFrame;
+    int _pad;
+    vec3 iResolution;
+    int _pad2;
+    vec4 iMouse;
 
-#define iTime zhader_uniforms.time
-#define iTimeDelta zhader_uniforms.time_delta
-#define iFrame zhader_uniforms.frame
-#define iResolution vec3(float(zhader_uniforms.width), float(zhader_uniforms.height), 0.0)
-#define iMouse vec4(zhader_uniforms.mouse_x, zhader_uniforms.mouse_y, float(zhader_uniforms.mouse_left), float(zhader_uniforms.mouse_right))
+    // int width;
+    // int height;
+    // float mouse_x;
+    // float mouse_y;
+    // bool mouse_left;
+    // bool mouse_right;
+    // bool mouse_middle;
+};
 
 // TODO: sound :}
 float iChannelTime[4];

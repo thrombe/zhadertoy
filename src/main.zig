@@ -212,15 +212,21 @@ pub const Renderer = struct {
         time: f32 = 0.0,
         time_delta: f32 = 0.0,
         frame: u32 = 0,
+        _pad: u32 = 0,
+
+        resolution: Vec3,
+        _pad2: u32 = 0,
+
+        mouse: Vec4 = .{},
+
         width: u32,
         height: u32,
         mouse_x: f32 = 0.0,
         mouse_y: f32 = 0.0,
+
         mouse_left: bool = false,
         mouse_right: bool = false,
         mouse_middle: bool = false,
-
-        padding: u64 = 0,
 
         fn reset_state(self: *@This()) void {
             self.time = 0.0;
@@ -231,6 +237,7 @@ pub const Renderer = struct {
             self.mouse_left = false;
             self.mouse_right = false;
             self.mouse_middle = false;
+            self.mouse = .{};
         }
     };
     const ShadertoyUniformBuffers = struct {
@@ -241,6 +248,7 @@ pub const Renderer = struct {
                 .uniforms = try Buffer(ShadertoyUniforms).new(@tagName(name) ++ " uniforms", .{
                     .width = width,
                     .height = height,
+                    .resolution = .{ .x = @floatFromInt(width), .y = @floatFromInt(height) },
                 }, allocator, device),
             };
         }
@@ -1361,6 +1369,8 @@ pub const Renderer = struct {
                     if (state.mouse_left) {
                         state.mouse_x = @floatCast(pos.pos.x);
                         state.mouse_y = @floatCast(@as(f64, @floatFromInt(state.height)) - pos.pos.y);
+                        state.mouse.x = state.mouse_x;
+                        state.mouse.y = state.mouse_y;
                         _ = self.config.ignore_pause_fuse.fuse();
                     }
                 },
@@ -1368,9 +1378,11 @@ pub const Renderer = struct {
                     switch (button.button) {
                         .left => {
                             state.mouse_left = true;
+                            state.mouse.z = 1.0;
                         },
                         .right => {
                             state.mouse_right = true;
+                            state.mouse.w = 1.0;
                         },
                         .middle => {
                             state.mouse_middle = true;
@@ -1382,9 +1394,11 @@ pub const Renderer = struct {
                     switch (button.button) {
                         .left => {
                             state.mouse_left = false;
+                            state.mouse.z = 0.0;
                         },
                         .right => {
                             state.mouse_right = false;
+                            state.mouse.w = 0.0;
                         },
                         .middle => {
                             state.mouse_middle = false;
@@ -1409,6 +1423,8 @@ pub const Renderer = struct {
                 .framebuffer_resize => |sze| {
                     state.width = sze.width;
                     state.height = sze.height;
+                    state.resolution.x = @floatFromInt(sze.width);
+                    state.resolution.y = @floatFromInt(sze.height);
                     _ = self.config.resize_fuse.fuse();
                 },
                 else => {},
