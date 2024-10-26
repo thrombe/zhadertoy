@@ -115,7 +115,7 @@ pub const Renderer = struct {
                         .compute = true,
                     },
                     .uniform,
-                    true,
+                    false,
                     0,
                 );
             }
@@ -411,6 +411,7 @@ pub const Renderer = struct {
                 self.bind_group.last_frame.release();
                 self.bind_group_layout.release();
                 self.pipeline.release();
+                self.inputs.release();
             }
         };
         const Pass = struct {
@@ -745,7 +746,7 @@ pub const Renderer = struct {
                 defer render_pass.release();
 
                 render_pass.setPipeline(pipeline);
-                render_pass.setBindGroup(0, bg, &.{0});
+                render_pass.setBindGroup(0, bg, &.{});
                 render_pass.draw(6, 1, 0, 0);
                 render_pass.end();
             }
@@ -755,6 +756,7 @@ pub const Renderer = struct {
                 self.bind_group.current.release();
                 self.bind_group_layout.release();
                 self.pipeline.release();
+                self.inputs.release();
             }
         };
         const Channel = struct {
@@ -779,7 +781,6 @@ pub const Renderer = struct {
                     return .{
                         .texture = tex,
                         .view = tex.createView(&.{}),
-                        // .view = tex.createView(&.{ .format = .rgba16_float }),
                     };
                 }
 
@@ -797,7 +798,6 @@ pub const Renderer = struct {
                             .texture_binding = true,
                         },
                         .format = .rgba32_float,
-                        // .view_formats = &[_]gpu.Texture.Format{ .rgba8_unorm, .rgba16_float },
                     });
                     const tex = device.createTexture(&tex_desc);
 
@@ -1019,40 +1019,50 @@ pub const Renderer = struct {
 
             const vert = try compiler.ctx.compile_vert();
             defer allocator.free(vert);
-            var shader = try compiler.ctx.compile(.screen, at.has_common);
-            defer allocator.free(shader);
-            var screen_pass = try ScreenPass.init(core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler, &.{ .vert = vert, .frag = shader });
+            var screen_pass = blk: {
+                const shader = try compiler.ctx.compile(.screen, at.has_common);
+                defer allocator.free(shader);
+
+                break :blk try ScreenPass.init(core_mod, &binding, buffers.screen.tex.view, buffers.screen.sampler, &.{ .vert = vert, .frag = shader });
+            };
             errdefer screen_pass.release();
 
-            allocator.free(shader);
-            shader = try compiler.ctx.compile(.image, at.has_common);
-            var image_pass = try ImagePass.init(at, core_mod, &buffers, &binding, &.{ .vert = vert, .frag = shader });
+            var image_pass = blk: {
+                const shader = try compiler.ctx.compile(.image, at.has_common);
+                defer allocator.free(shader);
+
+                break :blk try ImagePass.init(at, core_mod, &buffers, &binding, &.{ .vert = vert, .frag = shader });
+            };
             errdefer image_pass.release();
 
             var pass1 = if (at.passes.buffer1) |*pass| blk: {
-                allocator.free(shader);
-                shader = try compiler.ctx.compile(.buffer1, at.has_common);
+                const shader = try compiler.ctx.compile(.buffer1, at.has_common);
+                defer allocator.free(shader);
+
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass1) |*pass| pass.release();
 
             var pass2 = if (at.passes.buffer2) |*pass| blk: {
-                allocator.free(shader);
-                shader = try compiler.ctx.compile(.buffer2, at.has_common);
+                const shader = try compiler.ctx.compile(.buffer2, at.has_common);
+                defer allocator.free(shader);
+
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass2) |*pass| pass.release();
 
             var pass3 = if (at.passes.buffer3) |*pass| blk: {
-                allocator.free(shader);
-                shader = try compiler.ctx.compile(.buffer3, at.has_common);
+                const shader = try compiler.ctx.compile(.buffer3, at.has_common);
+                defer allocator.free(shader);
+
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass3) |*pass| pass.release();
 
             var pass4 = if (at.passes.buffer4) |*pass| blk: {
-                allocator.free(shader);
-                shader = try compiler.ctx.compile(.buffer4, at.has_common);
+                const shader = try compiler.ctx.compile(.buffer4, at.has_common);
+                defer allocator.free(shader);
+
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
             } else null;
             errdefer if (pass4) |*pass| pass.release();
