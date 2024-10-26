@@ -33,6 +33,10 @@ uniform Uniforms {
     // bool mouse_right;
     // bool mouse_middle;
 };
+layout(set = 0, binding = 1)
+uniform ChannelUniforms {
+    ivec4 vflips;
+};
 
 // TODO: sound :}
 float iChannelTime[4];
@@ -51,47 +55,68 @@ float iSampleRate = 4800.0;
     }; \
     ZhaderChannel##index iChannel##index; \
     vec4 texture(ZhaderChannel##index chan, vec2 pos) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
         return texture(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
     } \
     vec4 textureProj(ZhaderChannel##index chan, vec4 pos) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
         return textureProj(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
-    } \
-    vec4 texelFetch(ZhaderChannel##index chan, ivec2 pos, int lod) { \
-        return texelFetch(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
-    } \
-    vec4 textureLod(ZhaderChannel##index chan, vec2 pos, float lod) { \
-        return textureLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
-    } \
-    vec4 textureGrad(ZhaderChannel##index chan, vec2 pos, vec2 dpdx, vec2 dpdy) { \
-        return textureGrad(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, dpdx, dpdy); \
-    } \
-    vec4 textureGather(ZhaderChannel##index chan, vec2 pos) { \
-        return textureGather(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
     } \
     ivec2 textureSize(ZhaderChannel##index chan, int lod) { \
         return textureSize(sampler2D(zhader_channel_##index, zhader_sampler_##index), lod); \
+    } \
+    vec4 texelFetch(ZhaderChannel##index chan, ivec2 pos, int lod) { \
+        if (vflips[index] == 1) { \
+            pos.y = textureSize(chan, lod).y - pos.y - 1; \
+        } \
+        return texelFetch(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
+    } \
+    vec4 textureLod(ZhaderChannel##index chan, vec2 pos, float lod) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
+        return textureLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
+    } \
+    vec4 textureGrad(ZhaderChannel##index chan, vec2 pos, vec2 dpdx, vec2 dpdy) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
+        return textureGrad(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, dpdx, dpdy); \
+    } \
+    vec4 textureGather(ZhaderChannel##index chan, vec2 pos) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
+        return textureGather(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
     } \
     int textureQueryLevels(ZhaderChannel##index chan) { \
         return textureQueryLevels(sampler2D(zhader_channel_##index, zhader_sampler_##index)); \
     } \
     vec2 textureQueryLod(ZhaderChannel##index chan, vec2 pos) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
         return textureQueryLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
     }
 
 #ifdef ZHADER_CHANNEL0
-ZHADER_CHANNEL(0, 1, 2)
+ZHADER_CHANNEL(0, 2, 3)
 #endif // ZHADER_CHANNEL0
 
 #ifdef ZHADER_CHANNEL1
-ZHADER_CHANNEL(1, 3, 4)
+ZHADER_CHANNEL(1, 4, 5)
 #endif // ZHADER_CHANNEL1
 
 #ifdef ZHADER_CHANNEL2
-ZHADER_CHANNEL(2, 5, 6)
+ZHADER_CHANNEL(2, 6, 7)
 #endif // ZHADER_CHANNEL2
 
 #ifdef ZHADER_CHANNEL3
-ZHADER_CHANNEL(3, 7, 8)
+ZHADER_CHANNEL(3, 8, 9)
 #endif // ZHADER_CHANNEL3
 
 #undef ZHADER_CHANNEL
@@ -137,7 +162,9 @@ bool isInf(double x) {
  
 #ifdef ZHADER_INCLUDE_SCREEN
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    fragColor = texture(screen, fragCoord/iResolution.xy);
+    vec2 pos = fragCoord/iResolution.xy;
+    pos.y = 1.0 - pos.y;
+    fragColor = texture(screen, pos);
 }
 #endif // ZHADER_INCLUDE_SCREEN
 
@@ -170,10 +197,6 @@ layout(location = 0) out vec4 fragColor;
 void main() {
     vec2 res = iResolution.xy;
     vec2 pix = vec2(fragCoord.xy / 2.0 + 0.5) * res;
-
-#ifdef ZHADER_VFLIP
-    pix.y = res.y - pix.y;
-#endif
 
     // vec2 pix = iResolution.xy * fragCoord;
     // vec2 pix = gl_FragCoord.xy;

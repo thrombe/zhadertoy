@@ -240,6 +240,31 @@ pub const Renderer = struct {
             self.mouse = .{};
         }
     };
+    const ChannelUniforms = extern struct {
+        chan0: u32 = 0,
+        chan1: u32 = 0,
+        chan2: u32 = 0,
+        chan3: u32 = 0,
+
+        fn from_inputs(inputs: *const Shadertoy.ActiveToy.Inputs) @This() {
+            var uniforms = @This(){};
+
+            if (inputs.input1) |inp| {
+                uniforms.chan0 = @intFromBool(inp.sampler.vflip == .true);
+            }
+            if (inputs.input2) |inp| {
+                uniforms.chan1 = @intFromBool(inp.sampler.vflip == .true);
+            }
+            if (inputs.input3) |inp| {
+                uniforms.chan2 = @intFromBool(inp.sampler.vflip == .true);
+            }
+            if (inputs.input4) |inp| {
+                uniforms.chan3 = @intFromBool(inp.sampler.vflip == .true);
+            }
+
+            return uniforms;
+        }
+    };
     const ShadertoyUniformBuffers = struct {
         uniforms: *Buffer(ShadertoyUniforms),
 
@@ -464,9 +489,11 @@ pub const Renderer = struct {
                 input2: ?Input,
                 input3: ?Input,
                 input4: ?Input,
+                uniform: *Buffer(ChannelUniforms),
 
                 fn init(device: *gpu.Device, inputs: *const Shadertoy.ActiveToy.Inputs) @This() {
                     return .{
+                        .uniform = Buffer(ChannelUniforms).new("channel uniform", ChannelUniforms.from_inputs(inputs), allocator, device) catch unreachable,
                         .input1 = Input.init(device, inputs.input1),
                         .input2 = Input.init(device, inputs.input2),
                         .input3 = Input.init(device, inputs.input3),
@@ -475,6 +502,7 @@ pub const Renderer = struct {
                 }
 
                 fn release(self: *@This()) void {
+                    self.uniform.deinit(allocator);
                     if (self.input1) |*inp| inp.release();
                     if (self.input2) |*inp| inp.release();
                     if (self.input3) |*inp| inp.release();
@@ -540,6 +568,9 @@ pub const Renderer = struct {
 
                     try bind_group_entries.append(alloc, buf.bindGroupEntry(@intCast(i)));
                 }
+
+                try layout_entries.append(alloc, _inputs.uniform.bindGroupLayoutEntry(@intCast(layout_entries.items.len)));
+                try bind_group_entries.append(alloc, _inputs.uniform.bindGroupEntry(@intCast(bind_group_entries.items.len)));
 
                 const Fn = struct {
                     layouts: @TypeOf(layout_entries),
@@ -801,10 +832,6 @@ pub const Renderer = struct {
                     });
                     const tex = device.createTexture(&tex_desc);
 
-                    // TODO: vflip
-                    // - can handle vflip for everything just using shaders ig :/
-                    //    - create a new struct (custom type). override all texture functions
-                    //      and pass vflip as uniform
                     queue.writeTexture(&.{
                         .texture = tex,
                     }, &.{
@@ -1147,10 +1174,23 @@ pub const Renderer = struct {
         }
 
         fn render(self: *@This(), encoder: *gpu.CommandEncoder, screen_channel: *Channel.Tex, screen: *gpu.TextureView) void {
-            if (self.pass.buffer1) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
-            if (self.pass.buffer2) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
-            if (self.pass.buffer3) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
-            if (self.pass.buffer4) |*buf| buf.render(encoder, self.buffers.current_view(buf.output));
+            if (self.pass.buffer1) |*buf| {
+                buf.inputs.uniform.update(encoder);
+                buf.render(encoder, self.buffers.current_view(buf.output));
+            }
+            if (self.pass.buffer2) |*buf| {
+                buf.inputs.uniform.update(encoder);
+                buf.render(encoder, self.buffers.current_view(buf.output));
+            }
+            if (self.pass.buffer3) |*buf| {
+                buf.inputs.uniform.update(encoder);
+                buf.render(encoder, self.buffers.current_view(buf.output));
+            }
+            if (self.pass.buffer4) |*buf| {
+                buf.inputs.uniform.update(encoder);
+                buf.render(encoder, self.buffers.current_view(buf.output));
+            }
+            self.pass.image.inputs.uniform.update(encoder);
             self.pass.image.render(encoder, screen_channel.view);
             self.pass.screen.render(encoder, screen);
         }

@@ -394,18 +394,6 @@ pub const ToyMan = struct {
                 try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
             }
 
-            // NOTE: webgpu does not have a simple way to flip texture without copying it.
-            // shadertoy's buffer inputs always have vflip = true
-            // on shadertoy, texture fetches have y coord flipped compared to webgpu
-            // this hack just flips the y coord on buffer's mainImage fragCoord param. might fail if shadertoy
-            //  buffer vflip = false
-            switch (include) {
-                .image => {},
-                .screen, .buffer1, .buffer2, .buffer3, .buffer4 => {
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_VFLIP"));
-                },
-            }
-
             switch (include) {
                 .screen => {},
                 .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
