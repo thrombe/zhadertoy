@@ -977,77 +977,195 @@ pub const Toy = struct {
             }
         },
     };
+    pub const Ctype = enum {
+        texture,
+        cubemap,
+        buffer,
+        volume,
+        mic,
+        webcam,
+        video,
+        music,
+        keyboard,
+
+        pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+            return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+        }
+    };
     pub const Input = struct {
         id: u32,
         src: []const u8,
         channel: u2, // 0..=3
-        published: u32, // 1?
+        // published: u32, // 1?
         sampler: Sampler,
-        ctype: enum {
-            texture,
-            cubemap,
-            buffer,
-            volume,
-            mic,
-            webcam,
-            video,
-            music,
-            keyboard,
-
-            pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
-                return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
-            }
-        },
+        ctype: Ctype,
     };
-    Shader: struct {
-        info: struct {
-            id: []const u8,
-            name: []const u8,
-            username: []const u8,
-            description: []const u8,
-        },
+    pub const PassType = enum {
+        // shared by all shaders
+        common,
+
+        // - [Shadertoy Tutorial](https://inspirnathan.com/posts/62-shadertoy-tutorial-part-15)
+        // if buffer A uses buffer A as input, last frame's buffer A goes in
+        buffer,
+
+        cubemap,
+
+        // this is displayed on screen
+        image,
+
+        sound,
+
+        pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
+            return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
+        }
+    };
+    pub const Output = struct {
+        id: u32,
+
+        // idk what this is. always seems to be 0??
+        channel: u32,
+    };
+    pub const Pass = struct {
+        inputs: []Input,
+        outputs: []Output,
+        code: []const u8,
+        name: []const u8,
+        description: []const u8,
+
+        // passes in order: buffer, buffer, buffer, buffer, cubemap, image, sound
+        type: PassType,
+    };
+    pub const ShaderInfo = struct {
+        id: []const u8,
+        name: []const u8,
+        username: []const u8,
+        description: []const u8,
+    };
+    pub const Shader = struct {
+        info: ShaderInfo,
 
         // passes execute in the order they are defined. outputs from one pass may go
         // as inputs to next pass if defined
-        renderpass: []struct {
-            inputs: []Input,
-            outputs: []struct {
-                id: u32,
+        renderpass: []Pass,
+    };
+    Shader: Shader,
 
-                // idk what this is. always seems to be 0??
+    const IapiShader = struct {
+        info: ShaderInfo,
+        renderpass: []struct {
+            inputs: []struct {
+                id: []const u8,
+                filepath: []const u8,
+                previewfilepath: []const u8,
+                channel: u2,
+                sampler: Sampler,
+                type: Ctype,
+            },
+            outputs: []struct {
+                id: []const u8,
                 channel: u32,
             },
             code: []const u8,
             name: []const u8,
             description: []const u8,
-
-            // passes in order: buffer, buffer, buffer, buffer, cubemap, image, sound
-            type: enum {
-                // shared by all shaders
-                common,
-
-                // - [Shadertoy Tutorial](https://inspirnathan.com/posts/62-shadertoy-tutorial-part-15)
-                // if buffer A uses buffer A as input, last frame's buffer A goes in
-                buffer,
-
-                cubemap,
-
-                // this is displayed on screen
-                image,
-
-                sound,
-
-                pub fn jsonParse(alloc: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !@This() {
-                    return try JsonHelpers.parseEnumAsString(@This(), alloc, source, options);
-                }
-            },
+            type: PassType,
         },
-    },
+
+        const IdGen = struct {
+            hm: std.StringHashMap(u32),
+            id_gen: u32 = 1000,
+
+            fn get_id(self: *@This(), id: []const u8) !u32 {
+                if (id_from_string(id)) |known| {
+                    return known;
+                }
+                const res = try self.hm.getOrPut(id);
+                if (!res.found_existing) {
+                    defer self.id_gen += 1;
+                    res.value_ptr.* = self.id_gen;
+                }
+                return res.value_ptr.*;
+            }
+
+            fn id_from_string(id: []const u8) ?u32 {
+                if (std.mem.eql(u8, id, "4dXGR8")) {
+                    return 257;
+                }
+                if (std.mem.eql(u8, id, "XsXGR8")) {
+                    return 258;
+                }
+                if (std.mem.eql(u8, id, "4sXGR8")) {
+                    return 259;
+                }
+                if (std.mem.eql(u8, id, "XdfGR8")) {
+                    return 260;
+                }
+                if (std.mem.eql(u8, id, "4dX3Rr")) {
+                    return 41;
+                }
+                if (std.mem.eql(u8, id, "4dXGRr")) {
+                    return 33;
+                }
+
+                return null;
+            }
+        };
+
+        fn toShader(self: @This(), arena: std.mem.Allocator) !Shader {
+            var idgen = IdGen{
+                .hm = std.StringHashMap(u32).init(arena),
+            };
+            var passes = std.ArrayList(Pass).init(arena);
+            for (self.renderpass) |pass| {
+                var inputs = std.ArrayList(Input).init(arena);
+                var outputs = std.ArrayList(Output).init(arena);
+                for (pass.inputs) |input| {
+                    try inputs.append(.{
+                        .id = try idgen.get_id(input.id),
+                        .src = input.filepath,
+                        .channel = input.channel,
+                        .sampler = input.sampler,
+                        .ctype = input.type,
+                    });
+                }
+                for (pass.outputs) |output| {
+                    try outputs.append(.{
+                        .id = try idgen.get_id(output.id),
+                        .channel = output.channel,
+                    });
+                }
+                try passes.append(.{
+                    .inputs = try inputs.toOwnedSlice(),
+                    .outputs = try outputs.toOwnedSlice(),
+                    .code = pass.code,
+                    .name = pass.name,
+                    .description = pass.description,
+                    .type = pass.type,
+                });
+            }
+            return .{
+                .info = self.info,
+                .renderpass = try passes.toOwnedSlice(),
+            };
+        }
+    };
 
     pub fn from_json(json: []const u8) !Json {
-        const toy = std.json.parseFromSlice(@This(), allocator, json, json_parse_ops) catch |e| {
+        const toy = std.json.parseFromSlice(@This(), allocator, json, json_parse_ops) catch {
             const err = std.json.parseFromSlice(struct { Error: []const u8 }, allocator, json, json_parse_ops) catch {
-                return e;
+                const toylist = std.json.parseFromSlice([]IapiShader, allocator, json, json_parse_ops) catch |e| {
+                    return e;
+                };
+                errdefer toylist.deinit();
+                if (toylist.value.len == 0) {
+                    return error.ShaderNotFound;
+                }
+                return .{
+                    .arena = toylist.arena,
+                    .value = Toy{
+                        .Shader = try toylist.value[0].toShader(toylist.arena.allocator()),
+                    },
+                };
             };
             defer err.deinit();
             std.debug.print("shadertoy error: {s}\n", .{err.value.Error});
@@ -1095,7 +1213,7 @@ pub const Cached = struct {
 
         const cwd = std.fs.cwd();
         var file = cwd.openFile(path, .{}) catch {
-            const json = try get_shader_json(id);
+            const json = try get_inner_shader_json(id);
             defer allocator.free(json);
             try cwd.makePath(dir);
             const file = try cwd.createFile(path, .{});
@@ -1161,6 +1279,19 @@ pub fn get_shader_json(id: []const u8) ![]const u8 {
     const url = try std.fmt.allocPrintZ(allocator, api_base ++ "/shaders/{s}?key=" ++ key, .{id});
     defer allocator.free(url);
     const body = try Curl.get(url);
+    return body;
+}
+
+pub fn get_inner_shader_json(id: []const u8) ![]const u8 {
+    const referer = try std.fmt.allocPrintZ(allocator, "Referer: https://www.shadertoy.com/view/{s}", .{id});
+    defer allocator.free(referer);
+    const req = try std.fmt.allocPrintZ(allocator, "s=%7B%20%22shaders%22%20%3A%20%5B%22{s}%22%5D%20%7D&nt=1&nl=1&np=1", .{id});
+    defer allocator.free(req);
+
+    const body = try Curl.post("https://www.shadertoy.com/shadertoy", &[_][:0]const u8{
+        referer,
+        "Content-Type: application/x-www-form-urlencoded",
+    }, req);
     return body;
 }
 
