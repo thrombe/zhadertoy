@@ -45,7 +45,7 @@ float iSampleRate = 4800.0;
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
 
-#define ZHADER_CHANNEL(index, binding1, binding2) \
+#define ZHADER_CHANNEL_2D(index, binding1, binding2) \
     layout(set = 0, binding = binding1) \
     uniform texture2D zhader_channel_##index; \
     layout(set = 0, binding = binding2) \
@@ -104,29 +104,36 @@ float iSampleRate = 4800.0;
     }
 
 #ifdef ZHADER_CHANNEL0
-ZHADER_CHANNEL(0, 2, 3)
+    #ifdef ZHADER_CHANNEL0_2D
+        ZHADER_CHANNEL_2D(0, 2, 3)
+    #endif // ZHADER_CHANNEL0_2D
 #endif // ZHADER_CHANNEL0
 
 #ifdef ZHADER_CHANNEL1
-ZHADER_CHANNEL(1, 4, 5)
+    #ifdef ZHADER_CHANNEL1_2D
+        ZHADER_CHANNEL_2D(1, 4, 5)
+    #endif // ZHADER_CHANNEL1_2D
 #endif // ZHADER_CHANNEL1
 
 #ifdef ZHADER_CHANNEL2
-ZHADER_CHANNEL(2, 6, 7)
+    #ifdef ZHADER_CHANNEL2_2D
+        ZHADER_CHANNEL_2D(2, 6, 7)
+    #endif // ZHADER_CHANNEL2_2D
 #endif // ZHADER_CHANNEL2
 
 #ifdef ZHADER_CHANNEL3
-ZHADER_CHANNEL(3, 8, 9)
+    #ifdef ZHADER_CHANNEL3_2D
+        ZHADER_CHANNEL_2D(3, 8, 9)
+    #endif // ZHADER_CHANNEL3_2D
+
 #endif // ZHADER_CHANNEL3
 
-#undef ZHADER_CHANNEL
-
 #ifdef ZHADER_INCLUDE_SCREEN
-layout(set = 0, binding = 1)
-uniform texture2D screen_tex;
-layout(set = 0, binding = 2)
-uniform sampler screen_sampler;
-#define screen sampler2D(screen_tex, screen_sampler)
+    layout(set = 0, binding = 1)
+    uniform texture2D screen_tex;
+    layout(set = 0, binding = 2)
+    uniform sampler screen_sampler;
+    #define screen sampler2D(screen_tex, screen_sampler)
 #endif // ZHADER_INCLUDE_SCREEN
 
 // NOTE: 'sampler' is reserved in vulkan glsl
@@ -161,35 +168,35 @@ bool isInf(double x) {
 }
  
 #ifdef ZHADER_INCLUDE_SCREEN
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 pos = fragCoord/iResolution.xy;
-    pos.y = 1.0 - pos.y;
-    fragColor = texture(screen, pos);
-}
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec2 pos = fragCoord/iResolution.xy;
+        pos.y = 1.0 - pos.y;
+        fragColor = texture(screen, pos);
+    }
 #endif // ZHADER_INCLUDE_SCREEN
 
 #ifdef ZHADER_COMMON
-#include "common.glsl"
+    #include "common.glsl"
 #endif // ZHADER_COMMON
 
 #ifdef ZHADER_INCLUDE_IMAGE
-#include "image.glsl"
+    #include "image.glsl"
 #endif // ZHADER_INCLUDE_IMAGE
 
 #ifdef ZHADER_INCLUDE_BUF1
-#include "buffer1.glsl"
+    #include "buffer1.glsl"
 #endif // ZHADER_INCLUDE_BUF1
 
 #ifdef ZHADER_INCLUDE_BUF2
-#include "buffer2.glsl"
+    #include "buffer2.glsl"
 #endif // ZHADER_INCLUDE_BUF2
 
 #ifdef ZHADER_INCLUDE_BUF3
-#include "buffer3.glsl"
+    #include "buffer3.glsl"
 #endif // ZHADER_INCLUDE_BUF3
 
 #ifdef ZHADER_INCLUDE_BUF4
-#include "buffer4.glsl"
+    #include "buffer4.glsl"
 #endif // ZHADER_INCLUDE_BUF4
 
 layout(location = 0) in vec2 fragCoord;

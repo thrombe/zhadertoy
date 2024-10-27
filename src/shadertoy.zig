@@ -401,6 +401,11 @@ pub const ToyMan = struct {
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
+
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0_2D"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1_2D"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2_2D"));
+                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3_2D"));
                 },
             }
 
