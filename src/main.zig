@@ -1364,8 +1364,6 @@ pub const Renderer = struct {
         const encoder = device.createCommandEncoder(&.{ .label = label });
         defer encoder.release();
 
-        self.pri.binding.update(encoder);
-
         var ignore = self.config.ignore_pause_fuse.unfuse();
         if (ignore) {
             _ = self.config.ignore_pause_fuse_swapped.fuse();
@@ -1373,6 +1371,8 @@ pub const Renderer = struct {
             ignore = self.config.ignore_pause_fuse_swapped.unfuse();
         }
         if (!self.config.pause_shader or ignore) {
+            defer self.pri.uniforms.uniforms.val.frame += 1;
+            self.pri.binding.update(encoder);
             self.pri.swap();
             self.pri.render(encoder, &self.pri.buffers.screen.tex, app.rendering_data.?.screen);
         } else {
@@ -1418,7 +1418,6 @@ pub const Renderer = struct {
         if (!self.config.pause_shader) {
             state.time += state.time_delta;
         }
-        state.frame += 1;
 
         for (app.events.items) |event| {
             switch (event) {
