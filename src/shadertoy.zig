@@ -563,14 +563,11 @@ pub const ToyMan = struct {
         var toy = try Toy.from_file(toypath);
         defer toy.deinit();
 
-        self.shader_fuse.deinit();
-
         const active = try prepare_toy(&self.shader_cache, self.playground, &toy.value, self.playground, true);
         self.active_toy.deinit();
         self.active_toy.* = active;
         try self.compiler.ctx.toy_chan.send(try active.clone());
 
-        self.shader_fuse.* = try FsFuse.init(config.paths.playground);
         try self.shader_fuse.ctx.channel.send(.All);
     }
 
