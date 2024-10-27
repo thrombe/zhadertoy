@@ -506,6 +506,52 @@ pub const Curl = struct {
 
         return body.toOwnedSlice();
     }
+
+    pub fn post(url: [:0]const u8, headers: []const [:0]const u8, post_body: [:0]const u8) ![]u8 {
+        var ok = c.curl_global_init(c.CURL_GLOBAL_DEFAULT);
+        if (ok != c.CURLE_OK) {
+            return error.CurlIsNotOkay;
+        }
+        const curl = c.curl_easy_init() orelse return error.CurlInitFailed;
+        defer c.curl_easy_cleanup(curl);
+
+        var body = std.ArrayList(u8).init(allocator);
+
+        var headers_ll = c.curl_slist_append(null, "user-agent: " ++ user_agent);
+        defer c.curl_slist_free_all(headers_ll);
+
+        for (headers) |header| {
+            headers_ll = c.curl_slist_append(headers_ll, header.ptr);
+        }
+
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_URL, url.ptr);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, write_callback);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_WRITEDATA, &body);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_HTTPHEADER, headers_ll);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+        ok = c.curl_easy_setopt(curl, c.CURLOPT_POSTFIELDS, post_body.ptr);
+        if (ok != c.CURLE_OK) {
+            return error.CurlSetOptFailed;
+        }
+
+        ok = c.curl_easy_perform(curl);
+        if (ok != c.CURLE_OK) {
+            return error.CurlRequestFailed;
+        }
+
+        return body.toOwnedSlice();
+    }
 };
 
 pub const ImageMagick = struct {
