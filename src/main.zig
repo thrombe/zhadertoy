@@ -805,7 +805,7 @@ pub const Renderer = struct {
                 texture: *gpu.Texture,
                 view: *gpu.TextureView,
 
-                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, dim: gpu.TextureView.Dimension, comptime label: [:0]const u8) @This() {
                     const tex_desc = gpu.Texture.Descriptor.init(.{
                         .label = "texture " ++ label,
                         .size = size,
@@ -821,7 +821,7 @@ pub const Renderer = struct {
                     const tex = device.createTexture(&tex_desc);
                     return .{
                         .texture = tex,
-                        .view = tex.createView(&.{}),
+                        .view = tex.createView(&.{ .dimension = dim }),
                     };
                 }
 
@@ -903,10 +903,10 @@ pub const Renderer = struct {
             current: Tex,
             last_frame: Tex,
 
-            fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
+            fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, dim: gpu.TextureView.Dimension, comptime label: [:0]const u8) @This() {
                 return .{
-                    .current = Tex.init(device, size, format, "current " ++ label),
-                    .last_frame = Tex.init(device, size, format, "last frame " ++ label),
+                    .current = Tex.init(device, size, format, dim, "current " ++ label),
+                    .last_frame = Tex.init(device, size, format, dim, "last frame " ++ label),
                 };
             }
 
@@ -926,7 +926,7 @@ pub const Renderer = struct {
 
                 fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
                     return .{
-                        .tex = Channel.Tex.init(device, size, format, label),
+                        .tex = Channel.Tex.init(device, size, format, .dimension_undefined, label),
                         .sampler = device.createSampler(&.{}),
                     };
                 }
@@ -1001,6 +1001,7 @@ pub const Renderer = struct {
             bufferB: Channel,
             bufferC: Channel,
             bufferD: Channel,
+            cubemap: Channel,
             keyboard: Channel.Tex,
             sound: Channel.Tex,
             textures: TextureMap,
@@ -1009,13 +1010,19 @@ pub const Renderer = struct {
             empty_input: Sampled,
 
             fn init(device: *gpu.Device, queue: *gpu.Queue, size: gpu.Extent3D, at: *Shadertoy.ActiveToy) @This() {
+                // OOF: TODO: only create these buffers and cubemaps etc when we have those passes.
                 return .{
-                    .bufferA = Channel.init(device, size, .rgba32_float, "buffer A"),
-                    .bufferB = Channel.init(device, size, .rgba32_float, "buffer B"),
-                    .bufferC = Channel.init(device, size, .rgba32_float, "buffer C"),
-                    .bufferD = Channel.init(device, size, .rgba32_float, "buffer D"),
-                    .keyboard = Channel.Tex.init(device, size, .rgba32_float, "keyboard buffer"),
-                    .sound = Channel.Tex.init(device, size, .rgba32_float, "sound buffer"),
+                    .bufferA = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer A"),
+                    .bufferB = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer B"),
+                    .bufferC = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer C"),
+                    .bufferD = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer D"),
+                    .cubemap = Channel.init(device, .{
+                        .width = 1024,
+                        .height = 1024,
+                        .depth_or_array_layers = 6,
+                    }, .rgba16_float, .dimension_cube, "cubemap"),
+                    .keyboard = Channel.Tex.init(device, size, .rgba32_float, .dimension_undefined, "keyboard buffer"),
+                    .sound = Channel.Tex.init(device, size, .rgba32_float, .dimension_undefined, "sound buffer"),
                     .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
                     .empty_input = Sampled.init(device, .{ .width = 1 }, .rgba32_float, "empty buffer"),
                     .textures = TextureMap.init(device, queue, at),
@@ -1027,6 +1034,7 @@ pub const Renderer = struct {
                 self.bufferB.release();
                 self.bufferC.release();
                 self.bufferD.release();
+                self.cubemap.release();
                 self.keyboard.release();
                 self.sound.release();
                 self.screen.release();
@@ -1041,9 +1049,7 @@ pub const Renderer = struct {
                         .BufferB => return &self.bufferB.current,
                         .BufferC => return &self.bufferC.current,
                         .BufferD => return &self.bufferD.current,
-
-                        // TODO:
-                        .Cubemap => return &self.empty_input.tex,
+                        .Cubemap => return &self.cubemap.current,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
@@ -1062,9 +1068,7 @@ pub const Renderer = struct {
                         .BufferB => return &self.bufferB.last_frame,
                         .BufferC => return &self.bufferC.last_frame,
                         .BufferD => return &self.bufferD.last_frame,
-
-                        // TODO:
-                        .Cubemap => return &self.empty_input.tex,
+                        .Cubemap => return &self.cubemap.last_frame,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
@@ -1255,6 +1259,7 @@ pub const Renderer = struct {
             self.buffers.bufferB.swap();
             self.buffers.bufferC.swap();
             self.buffers.bufferD.swap();
+            self.buffers.cubemap.swap();
             if (self.pass.buffer1) |*buf| buf.swap();
             if (self.pass.buffer2) |*buf| buf.swap();
             if (self.pass.buffer3) |*buf| buf.swap();
@@ -1921,6 +1926,7 @@ const Gui = struct {
             "s:WdyGzy: texture fluid thing",
             "s:7slfWX: keyboard usage",
             "s:4sSfzK: cubemap usage",
+            "s:tsGXWm: cubemap generation",
             "s:4dcGW2: iChannelResolution usage",
             "s:dtVSzw: volume usage",
         };

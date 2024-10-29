@@ -466,6 +466,8 @@ pub const ToyMan = struct {
                 },
             }
 
+            // TODO: cubemap pass not implemented.
+            // i can't find many cubemap pass shaders to test :/
             try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (meta) {
                 .screen => "SCREEN",
                 .image => "IMAGE",
