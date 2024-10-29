@@ -443,7 +443,7 @@ pub const Renderer = struct {
             const Input = struct {
                 // OOF: FIXME: typ is not owned. but there's no indication/care given about it.
                 //  maybe just store a key into a hashmap stored in ActiveToy to avoid big 'typ'
-                typ: Shadertoy.ActiveToy.Buffer,
+                typ: Shadertoy.ActiveToy.Channel,
                 sampler: *gpu.Sampler,
                 info: Shadertoy.ActiveToy.Input,
 
@@ -516,7 +516,7 @@ pub const Renderer = struct {
                 last_frame: *gpu.BindGroup,
             },
             bind_group_layout: *gpu.BindGroupLayout,
-            output: Shadertoy.ActiveToy.Buf,
+            output: Shadertoy.ActiveToy.Writable,
             inputs: Inputs,
 
             fn init(
@@ -592,7 +592,17 @@ pub const Renderer = struct {
                                 .linear => .float,
                                 .mipmap => .float,
                             } else .unfilterable_float,
-                            .dimension_2d,
+                            if (info) |i| switch (i.typ) {
+                                .keyboard, .mic, .webcam, .texture => .dimension_2d,
+                                .cubemap => .dimension_cube,
+                                .writable => |w| switch (w) {
+                                    .Cubemap => .dimension_cube,
+                                    .BufferA, .BufferB, .BufferC, .BufferD => .dimension_2d,
+                                },
+
+                                // TODO:
+                                .volume, .video, .music => .dimension_2d,
+                            } else .dimension_2d,
                             false,
                         ));
                         try self.groups.append(self.alloc, gpu.BindGroup.Entry.textureView(@intCast(self.groups.items.len), view));
@@ -815,6 +825,46 @@ pub const Renderer = struct {
                     };
                 }
 
+                fn from_cubemap(device: *gpu.Device, queue: *gpu.Queue, imgs: [6]*utils.ImageMagick.FloatImage, label: [:0]const u8) @This() {
+                    var size = gpu.Extent3D{
+                        .width = @intCast(imgs[0].width),
+                        .height = @intCast(imgs[0].height),
+                        .depth_or_array_layers = 6,
+                    };
+                    const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .label = label,
+                        .size = size,
+                        .dimension = .dimension_2d,
+                        .usage = .{
+                            .copy_dst = true,
+                            .texture_binding = true,
+                        },
+                        .format = .rgba32_float,
+                    });
+                    const tex = device.createTexture(&tex_desc);
+
+                    // we only write 1 image at a time
+                    size.depth_or_array_layers = 1;
+                    for (imgs, 0..) |img, z| {
+                        queue.writeTexture(&.{
+                            .texture = tex,
+                            .origin = .{
+                                .z = @intCast(z),
+                            },
+                        }, &.{
+                            .bytes_per_row = @sizeOf(utils.ImageMagick.Pixel(f32)) * size.width,
+                            .rows_per_image = size.height,
+                        }, &size, img.buffer);
+                    }
+
+                    return .{
+                        .texture = tex,
+                        .view = tex.createView(&.{
+                            .dimension = .dimension_cube,
+                        }),
+                    };
+                }
+
                 fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.FloatImage, label: [:0]const u8) @This() {
                     const size = gpu.Extent3D{
                         .width = @intCast(img.width),
@@ -920,6 +970,20 @@ pub const Renderer = struct {
                                 res.value_ptr.* = Channel.Tex.from_img(device, queue, &tex.img, tex.name);
                             }
                         },
+                        .cubemap => |*cubemap| {
+                            const res = self.hm.getOrPut(cubemap.name) catch unreachable;
+                            if (!res.found_existing) {
+                                res.key_ptr.* = allocator.dupe(u8, cubemap.name) catch unreachable;
+                                res.value_ptr.* = Channel.Tex.from_cubemap(device, queue, .{
+                                    &cubemap.img0,
+                                    &cubemap.img1,
+                                    &cubemap.img2,
+                                    &cubemap.img3,
+                                    &cubemap.img4,
+                                    &cubemap.img5,
+                                }, cubemap.name);
+                            }
+                        },
                         else => {},
                     }
                 }
@@ -970,36 +1034,50 @@ pub const Renderer = struct {
                 self.textures.release();
             }
 
-            fn get_current(self: *@This(), buf: Shadertoy.ActiveToy.Buffer) *Channel.Tex {
+            fn get_current(self: *@This(), buf: Shadertoy.ActiveToy.Channel) *Channel.Tex {
                 switch (buf) {
-                    .Buf => |buf1| switch (buf1) {
+                    .writable => |buf1| switch (buf1) {
                         .BufferA => return &self.bufferA.current,
                         .BufferB => return &self.bufferB.current,
                         .BufferC => return &self.bufferC.current,
                         .BufferD => return &self.bufferD.current,
+
+                        // TODO:
+                        .Cubemap => return &self.empty_input.tex,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
                     .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
+                    .cubemap => |tex| return self.textures.hm.getPtr(tex.name).?,
+
+                    // TODO:
+                    .volume, .video, .mic, .webcam => return &self.empty_input.tex,
                 }
             }
 
-            fn get_last_frame(self: *@This(), buf: Shadertoy.ActiveToy.Buffer) *Channel.Tex {
+            fn get_last_frame(self: *@This(), buf: Shadertoy.ActiveToy.Channel) *Channel.Tex {
                 switch (buf) {
-                    .Buf => |buf1| switch (buf1) {
+                    .writable => |buf1| switch (buf1) {
                         .BufferA => return &self.bufferA.last_frame,
                         .BufferB => return &self.bufferB.last_frame,
                         .BufferC => return &self.bufferC.last_frame,
                         .BufferD => return &self.bufferD.last_frame,
+
+                        // TODO:
+                        .Cubemap => return &self.empty_input.tex,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
                     .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
+                    .cubemap => |tex| return self.textures.hm.getPtr(tex.name).?,
+
+                    // TODO:
+                    .volume, .video, .mic, .webcam => return &self.empty_input.tex,
                 }
             }
 
-            fn current_view(self: *@This(), buf: Shadertoy.ActiveToy.Buf) *gpu.TextureView {
-                return self.get_current(.{ .Buf = buf }).view;
+            fn current_view(self: *@This(), buf: Shadertoy.ActiveToy.Writable) *gpu.TextureView {
+                return self.get_current(.{ .writable = buf }).view;
             }
         };
 
@@ -1055,7 +1133,9 @@ pub const Renderer = struct {
             errdefer screen_pass.release();
 
             var image_pass = blk: {
-                const shader = try compiler.ctx.compile(.image, at.has_common);
+                const shader = try compiler.ctx.compile(.{
+                    .image = &at.passes.image.inputs,
+                }, at.has_common);
                 defer allocator.free(shader);
 
                 break :blk try ImagePass.init(at, core_mod, &buffers, &binding, &.{ .vert = vert, .frag = shader });
@@ -1063,7 +1143,9 @@ pub const Renderer = struct {
             errdefer image_pass.release();
 
             var pass1 = if (at.passes.buffer1) |*pass| blk: {
-                const shader = try compiler.ctx.compile(.buffer1, at.has_common);
+                const shader = try compiler.ctx.compile(.{
+                    .buffer1 = &pass.inputs,
+                }, at.has_common);
                 defer allocator.free(shader);
 
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
@@ -1071,7 +1153,9 @@ pub const Renderer = struct {
             errdefer if (pass1) |*pass| pass.release();
 
             var pass2 = if (at.passes.buffer2) |*pass| blk: {
-                const shader = try compiler.ctx.compile(.buffer2, at.has_common);
+                const shader = try compiler.ctx.compile(.{
+                    .buffer2 = &pass.inputs,
+                }, at.has_common);
                 defer allocator.free(shader);
 
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
@@ -1079,7 +1163,9 @@ pub const Renderer = struct {
             errdefer if (pass2) |*pass| pass.release();
 
             var pass3 = if (at.passes.buffer3) |*pass| blk: {
-                const shader = try compiler.ctx.compile(.buffer3, at.has_common);
+                const shader = try compiler.ctx.compile(.{
+                    .buffer3 = &pass.inputs,
+                }, at.has_common);
                 defer allocator.free(shader);
 
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
@@ -1087,7 +1173,9 @@ pub const Renderer = struct {
             errdefer if (pass3) |*pass| pass.release();
 
             var pass4 = if (at.passes.buffer4) |*pass| blk: {
-                const shader = try compiler.ctx.compile(.buffer4, at.has_common);
+                const shader = try compiler.ctx.compile(.{
+                    .buffer4 = &pass.inputs,
+                }, at.has_common);
                 defer allocator.free(shader);
 
                 break :blk try Pass.init(core_mod, pass, &buffers, &binding, &.{ .vert = vert, .frag = shader });
@@ -1830,8 +1918,11 @@ const Gui = struct {
             "s:WlKXzm: satellite thing",
             "s:43lfRB: cool blue 3d fractal",
             "s:3tsyzl: iq geoids",
-            "s:7slfWX: uninitialized vars",
-            "s:WdyGzy: idk. broken",
+            "s:WdyGzy: texture fluid thing",
+            "s:7slfWX: keyboard usage",
+            "s:4sSfzK: cubemap usage",
+            "s:4dcGW2: iChannelResolution usage",
+            "s:dtVSzw: volume usage",
         };
         imgui.setNextItemWidth(200);
         _ = imgui.comboChar("shadertoy", &pick_toy_index, &toys, toys.len);

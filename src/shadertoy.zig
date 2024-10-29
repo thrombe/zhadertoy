@@ -59,13 +59,13 @@ pub fn testfn1() !void {
 }
 
 pub const ToyMan = struct {
-    pub const ShaderInclude = enum {
+    pub const ShaderMetadata = union(enum) {
         screen,
-        image,
-        buffer1,
-        buffer2,
-        buffer3,
-        buffer4,
+        image: *ActiveToy.Inputs,
+        buffer1: *ActiveToy.Inputs,
+        buffer2: *ActiveToy.Inputs,
+        buffer3: *ActiveToy.Inputs,
+        buffer4: *ActiveToy.Inputs,
     };
     pub const CompiledShader = struct {
         vert: []u32,
@@ -164,7 +164,9 @@ pub const ToyMan = struct {
                         defer self.compiled.?.mutex.unlock();
 
                         if (self.compiled.?.buffer1) |buf| {
-                            self.compiled.?.buffer1 = try self.compile(.buffer1, at.has_common);
+                            self.compiled.?.buffer1 = try self.compile(.{
+                                .buffer1 = &at.passes.buffer1.?.inputs,
+                            }, at.has_common);
                             allocator.free(buf);
                         }
                     },
@@ -173,7 +175,9 @@ pub const ToyMan = struct {
                         defer self.compiled.?.mutex.unlock();
 
                         if (self.compiled.?.buffer2) |buf| {
-                            self.compiled.?.buffer2 = try self.compile(.buffer2, at.has_common);
+                            self.compiled.?.buffer2 = try self.compile(.{
+                                .buffer2 = &at.passes.buffer2.?.inputs,
+                            }, at.has_common);
                             allocator.free(buf);
                         }
                     },
@@ -182,7 +186,9 @@ pub const ToyMan = struct {
                         defer self.compiled.?.mutex.unlock();
 
                         if (self.compiled.?.buffer3) |buf| {
-                            self.compiled.?.buffer3 = try self.compile(.buffer3, at.has_common);
+                            self.compiled.?.buffer3 = try self.compile(.{
+                                .buffer3 = &at.passes.buffer3.?.inputs,
+                            }, at.has_common);
                             allocator.free(buf);
                         }
                     },
@@ -191,7 +197,9 @@ pub const ToyMan = struct {
                         defer self.compiled.?.mutex.unlock();
 
                         if (self.compiled.?.buffer4) |buf| {
-                            self.compiled.?.buffer4 = try self.compile(.buffer4, at.has_common);
+                            self.compiled.?.buffer4 = try self.compile(.{
+                                .buffer4 = &at.passes.buffer4.?.inputs,
+                            }, at.has_common);
                             allocator.free(buf);
                         }
                     },
@@ -200,12 +208,16 @@ pub const ToyMan = struct {
                         defer self.compiled.?.mutex.unlock();
 
                         const buf = self.compiled.?.image;
-                        self.compiled.?.image = try self.compile(.image, at.has_common);
+                        self.compiled.?.image = try self.compile(.{
+                            .image = &at.passes.image.inputs,
+                        }, at.has_common);
                         allocator.free(buf);
                     },
                     .All => {
                         var compiled = blk: {
-                            const image = try self.compile(.image, at.has_common);
+                            const image = try self.compile(.{
+                                .image = &at.passes.image.inputs,
+                            }, at.has_common);
                             errdefer allocator.free(image);
 
                             const screen = try self.compile(.screen, at.has_common);
@@ -223,10 +235,18 @@ pub const ToyMan = struct {
                         };
                         errdefer compiled.deinit();
 
-                        if (at.passes.buffer1) |_| compiled.buffer1 = try self.compile(.buffer1, at.has_common);
-                        if (at.passes.buffer2) |_| compiled.buffer2 = try self.compile(.buffer2, at.has_common);
-                        if (at.passes.buffer3) |_| compiled.buffer3 = try self.compile(.buffer3, at.has_common);
-                        if (at.passes.buffer4) |_| compiled.buffer4 = try self.compile(.buffer4, at.has_common);
+                        if (at.passes.buffer1) |_| compiled.buffer1 = try self.compile(.{
+                            .buffer1 = &at.passes.buffer1.?.inputs,
+                        }, at.has_common);
+                        if (at.passes.buffer2) |_| compiled.buffer2 = try self.compile(.{
+                            .buffer2 = &at.passes.buffer2.?.inputs,
+                        }, at.has_common);
+                        if (at.passes.buffer3) |_| compiled.buffer3 = try self.compile(.{
+                            .buffer3 = &at.passes.buffer3.?.inputs,
+                        }, at.has_common);
+                        if (at.passes.buffer4) |_| compiled.buffer4 = try self.compile(.{
+                            .buffer4 = &at.passes.buffer4.?.inputs,
+                        }, at.has_common);
 
                         _ = compiled.input_fuse.fuse();
                         _ = compiled.uniform_reset_fuse.fuse();
@@ -247,8 +267,8 @@ pub const ToyMan = struct {
                 _ = self.compile_fuse.fuse();
             }
 
-            pub fn compile(self: *@This(), include: ShaderInclude, has_common: bool) ![]u32 {
-                return try compile_frag(self.config, has_common, include);
+            pub fn compile(self: *@This(), meta: ShaderMetadata, has_common: bool) ![]u32 {
+                return try compile_frag(self.config, has_common, meta);
             }
 
             pub fn compile_vert(self: *@This()) ![]u32 {
@@ -381,7 +401,7 @@ pub const ToyMan = struct {
         fn compile_frag(
             render_config: *const main.Renderer.Config,
             has_common: bool,
-            include: ShaderInclude,
+            meta: ShaderMetadata,
         ) ![]u32 {
             var definitions = std.ArrayList([]const u8).init(allocator);
             defer {
@@ -394,22 +414,59 @@ pub const ToyMan = struct {
                 try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
             }
 
-            switch (include) {
+            switch (meta) {
                 .screen => {},
                 .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
                     try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
+                },
+            }
+            switch (meta) {
+                .screen => {},
+                .image, .buffer1, .buffer2, .buffer3, .buffer4 => |inputs| {
+                    for ([_]*const ?ActiveToy.Input{ &inputs.input1, &inputs.input2, &inputs.input3, &inputs.input4 }, 0..) |maybe_inp, i| {
+                        var typ: enum {
+                            d2,
+                            cubemap,
+                        } = .d2;
+                        if (maybe_inp.*) |inp| {
+                            switch (inp.typ) {
+                                .keyboard, .mic, .webcam, .texture => {
+                                    typ = .d2;
+                                },
 
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0_2D"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1_2D"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2_2D"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3_2D"));
+                                .writable => |w| switch (w) {
+                                    .Cubemap => {
+                                        typ = .cubemap;
+                                    },
+                                    .BufferA, .BufferB, .BufferC, .BufferD => {
+                                        typ = .d2;
+                                    },
+                                },
+                                .cubemap => {
+                                    typ = .cubemap;
+                                },
+
+                                // TODO:
+                                .volume, .video, .music => {},
+                            }
+                        }
+
+                        switch (typ) {
+                            .d2 => {
+                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_2D", .{i}));
+                            },
+                            .cubemap => {
+                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_CUBEMAP", .{i}));
+                            },
+                        }
+                    }
                 },
             }
 
-            try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (include) {
+            try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (meta) {
                 .screen => "SCREEN",
                 .image => "IMAGE",
                 .buffer1 => "BUF1",
@@ -612,7 +669,7 @@ pub const ToyMan = struct {
                 .buffer => {
                     if (pass.outputs.len != 1) return error.BadBufferPassOutput;
                     const out_id = pass.outputs[0].id;
-                    const out_buf = try std.meta.intToEnum(ActiveToy.Buf, out_id);
+                    const out_buf = try std.meta.intToEnum(ActiveToy.Writable, out_id);
 
                     var num: u32 = 1;
                     var buffer = &t.passes.buffer1;
@@ -704,20 +761,36 @@ pub const ToyMan = struct {
 //    - output: buffer{1, 2, 3, 4}
 //    - 4 inputs: buffer{1, 2, 3, 4}
 pub const ActiveToy = struct {
-    pub const Buf = enum(u32) {
+    pub const Writable = enum(u32) {
         BufferA = 257,
         BufferB = 258,
         BufferC = 259,
         BufferD = 260,
+        Cubemap = 41,
     };
-    pub const Buffer = union(enum) {
-        Buf: Buf,
+    pub const Channel = union(enum) {
+        writable: Writable,
         keyboard,
-        music,
+        mic,
+        webcam,
         texture: struct {
             name: [:0]const u8,
             img: utils.ImageMagick.FloatImage,
         },
+        cubemap: struct {
+            name: [:0]const u8,
+            img0: utils.ImageMagick.FloatImage,
+            img1: utils.ImageMagick.FloatImage,
+            img2: utils.ImageMagick.FloatImage,
+            img3: utils.ImageMagick.FloatImage,
+            img4: utils.ImageMagick.FloatImage,
+            img5: utils.ImageMagick.FloatImage,
+        },
+
+        // TODO:
+        volume,
+        video,
+        music,
 
         pub fn deinit(self: *@This()) void {
             switch (self.*) {
@@ -725,13 +798,22 @@ pub const ActiveToy = struct {
                     allocator.free(tex.name);
                     tex.img.deinit();
                 },
+                .cubemap => |*cube| {
+                    allocator.free(cube.name);
+                    cube.img0.deinit();
+                    cube.img1.deinit();
+                    cube.img2.deinit();
+                    cube.img3.deinit();
+                    cube.img4.deinit();
+                    cube.img5.deinit();
+                },
                 else => {},
             }
         }
     };
     pub const Sampler = Toy.Sampler;
     pub const Input = struct {
-        typ: Buffer,
+        typ: Channel,
         sampler: Sampler,
         from_current_frame: bool = false,
 
@@ -739,7 +821,7 @@ pub const ActiveToy = struct {
             switch (input.ctype) {
                 .buffer => {
                     return .{
-                        .typ = .{ .Buf = try std.meta.intToEnum(Buf, input.id) },
+                        .typ = .{ .writable = try std.meta.intToEnum(Writable, input.id) },
                         .sampler = input.sampler,
                     };
                 },
@@ -758,18 +840,74 @@ pub const ActiveToy = struct {
                 .keyboard => {
                     return .{ .typ = .keyboard, .sampler = input.sampler };
                 },
-                .music => {
-                    return .{ .typ = .music, .sampler = input.sampler };
+                .mic => {
+                    return .{ .typ = .mic, .sampler = input.sampler };
                 },
-                else => |typ| {
-                    std.debug.print("did not handle ctype '{any}'\n", .{typ});
-                    @panic("");
+                .webcam => {
+                    return .{ .typ = .webcam, .sampler = input.sampler };
+                },
+                .cubemap => {
+                    if (@intFromEnum(Writable.Cubemap) == input.id) {
+                        return .{ .typ = .{ .writable = .Cubemap }, .sampler = input.sampler };
+                    }
+
+                    var media_src = std.ArrayList(u8).init(allocator);
+                    defer media_src.deinit();
+                    try media_src.appendSlice(input.src);
+
+                    var img0 = try cache.media_img(media_src.items);
+                    errdefer img0.deinit();
+
+                    const ext = std.fs.path.extension(input.src);
+                    media_src.items.len -= ext.len;
+                    try media_src.appendSlice("_1");
+                    try media_src.appendSlice(ext);
+                    var img1 = try cache.media_img(media_src.items);
+                    errdefer img1.deinit();
+
+                    media_src.items[media_src.items.len - 1 - ext.len] += 1;
+                    var img2 = try cache.media_img(media_src.items);
+                    errdefer img2.deinit();
+
+                    media_src.items[media_src.items.len - 1 - ext.len] += 1;
+                    var img3 = try cache.media_img(media_src.items);
+                    errdefer img3.deinit();
+
+                    media_src.items[media_src.items.len - 1 - ext.len] += 1;
+                    var img4 = try cache.media_img(media_src.items);
+                    errdefer img4.deinit();
+
+                    media_src.items[media_src.items.len - 1 - ext.len] += 1;
+                    var img5 = try cache.media_img(media_src.items);
+                    errdefer img5.deinit();
+
+                    const name = try allocator.dupeZ(u8, input.src);
+                    errdefer allocator.free(name);
+                    return .{
+                        .typ = .{
+                            .cubemap = .{
+                                .img0 = img0,
+                                .img1 = img1,
+                                .img2 = img2,
+                                .img3 = img3,
+                                .img4 = img4,
+                                .img5 = img5,
+                                .name = name,
+                            },
+                        },
+                        .sampler = input.sampler,
+                    };
+                },
+                .music, .video, .volume => {
+                    // TODO:
+                    std.debug.print("did not handle ctype '{any}'\n", .{input.ctype});
+                    return .{ .typ = .keyboard, .sampler = input.sampler };
                 },
             }
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
-            if (std.meta.eql(self.typ, .{ .Buf = typ })) {
+        fn mark_current_frame_input(self: *@This(), typ: Writable) void {
+            if (std.meta.eql(self.typ, .{ .writable = typ })) {
                 self.from_current_frame = true;
             }
         }
@@ -780,6 +918,15 @@ pub const ActiveToy = struct {
                 .texture => |*tex| {
                     tex.img.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), tex.img.buffer);
                     tex.name = try allocator.dupeZ(u8, tex.name);
+                },
+                .cubemap => |*cube| {
+                    cube.img0.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img0.buffer);
+                    cube.img1.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img1.buffer);
+                    cube.img2.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img2.buffer);
+                    cube.img3.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img3.buffer);
+                    cube.img4.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img4.buffer);
+                    cube.img5.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img5.buffer);
+                    cube.name = try allocator.dupeZ(u8, cube.name);
                 },
                 else => {},
             }
@@ -817,7 +964,7 @@ pub const ActiveToy = struct {
             return self;
         }
 
-        fn mark_current_frame_input(self: *@This(), typ: Buf) void {
+        fn mark_current_frame_input(self: *@This(), typ: Writable) void {
             if (self.input1) |*inp| inp.mark_current_frame_input(typ);
             if (self.input2) |*inp| inp.mark_current_frame_input(typ);
             if (self.input3) |*inp| inp.mark_current_frame_input(typ);
@@ -855,7 +1002,7 @@ pub const ActiveToy = struct {
         }
     };
     pub const BufferPass = struct {
-        output: Buf,
+        output: Writable,
         inputs: Inputs,
 
         fn clone(self: *const @This()) !@This() {

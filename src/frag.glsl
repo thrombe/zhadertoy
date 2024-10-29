@@ -103,22 +103,50 @@ float iSampleRate = 4800.0;
         return textureQueryLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
     }
 
+#define ZHADER_CHANNEL_CUBEMAP(index, binding1, binding2) \
+    layout(set = 0, binding = binding1) \
+    uniform textureCube zhader_channel_##index; \
+    layout(set = 0, binding = binding2) \
+    uniform sampler zhader_sampler_##index; \
+    struct ZhaderChannel##index { \
+        int a; \
+    }; \
+    ZhaderChannel##index iChannel##index; \
+    vec4 texture(ZhaderChannel##index chan, vec3 pos) { \
+        if (vflips[index] == 1) { \
+            pos.y = 1.0 - pos.y; \
+        } \
+        return texture(samplerCube(zhader_channel_##index, zhader_sampler_##index), pos); \
+    }
+
 #ifdef ZHADER_CHANNEL0
     #ifdef ZHADER_CHANNEL0_2D
         ZHADER_CHANNEL_2D(0, 2, 3)
     #endif // ZHADER_CHANNEL0_2D
+
+    #ifdef ZHADER_CHANNEL0_CUBEMAP
+        ZHADER_CHANNEL_CUBEMAP(0, 2, 3)
+    #endif // ZHADER_CHANNEL0_CUBEMAP
 #endif // ZHADER_CHANNEL0
 
 #ifdef ZHADER_CHANNEL1
     #ifdef ZHADER_CHANNEL1_2D
         ZHADER_CHANNEL_2D(1, 4, 5)
     #endif // ZHADER_CHANNEL1_2D
+
+    #ifdef ZHADER_CHANNEL1_CUBEMAP
+        ZHADER_CHANNEL_CUBEMAP(1, 4, 5)
+    #endif // ZHADER_CHANNEL1_CUBEMAP
 #endif // ZHADER_CHANNEL1
 
 #ifdef ZHADER_CHANNEL2
     #ifdef ZHADER_CHANNEL2_2D
         ZHADER_CHANNEL_2D(2, 6, 7)
     #endif // ZHADER_CHANNEL2_2D
+
+    #ifdef ZHADER_CHANNEL2_CUBEMAP
+        ZHADER_CHANNEL_CUBEMAP(2, 6, 7)
+    #endif // ZHADER_CHANNEL2_CUBEMAP
 #endif // ZHADER_CHANNEL2
 
 #ifdef ZHADER_CHANNEL3
@@ -126,6 +154,9 @@ float iSampleRate = 4800.0;
         ZHADER_CHANNEL_2D(3, 8, 9)
     #endif // ZHADER_CHANNEL3_2D
 
+    #ifdef ZHADER_CHANNEL3_CUBEMAP
+        ZHADER_CHANNEL_CUBEMAP(3, 8, 9)
+    #endif // ZHADER_CHANNEL3_CUBEMAP
 #endif // ZHADER_CHANNEL3
 
 #ifdef ZHADER_INCLUDE_SCREEN
@@ -138,6 +169,7 @@ float iSampleRate = 4800.0;
 
 // NOTE: 'sampler' is reserved in vulkan glsl
 #define sampler zhader_sampler
+#define textureCube zhader_textureCube
 
 // NOTE: wgsl has isnan, and it's defined here too - but it won't compile
 #define isnan isNan
