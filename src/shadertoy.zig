@@ -434,7 +434,7 @@ pub const ToyMan = struct {
                         } = .d2;
                         if (maybe_inp.*) |inp| {
                             switch (inp.typ) {
-                                .keyboard, .mic, .webcam, .texture => {
+                                .texture => {
                                     typ = .d2;
                                 },
 
@@ -454,7 +454,7 @@ pub const ToyMan = struct {
                                 },
 
                                 // TODO:
-                                .video, .music => {},
+                                .keyboard, .mic, .webcam, .video, .music => {},
                             }
                         }
 
@@ -600,12 +600,12 @@ pub const ToyMan = struct {
                         .Cubemap => .cube,
                         .BufferA, .BufferB, .BufferC, .BufferD => .d2,
                     },
-                    .keyboard, .mic, .webcam, .texture => .d2,
+                    .texture => .d2,
                     .cubemap => .cube,
                     .volume => .d3,
 
                     // TODO:
-                    .video, .music => .d2,
+                    .keyboard, .mic, .webcam, .video, .music => .d2,
                 };
             }
 
@@ -1107,9 +1107,6 @@ pub const ActiveToy = struct {
     };
     pub const Channel = union(enum) {
         writable: Writable,
-        keyboard,
-        mic,
-        webcam,
         texture: struct {
             name: [:0]const u8,
             img: utils.ImageMagick.FloatImage,
@@ -1131,6 +1128,9 @@ pub const ActiveToy = struct {
         // TODO:
         video,
         music,
+        keyboard,
+        mic,
+        webcam,
 
         pub const Volume = struct {
             // header is 20 bytes (32 * 32 * 32 is 32768 but file is 32788)

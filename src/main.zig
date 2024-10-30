@@ -668,7 +668,7 @@ pub const Renderer = struct {
                                 .mipmap => .float,
                             } else .unfilterable_float,
                             if (info) |i| switch (i.typ) {
-                                .keyboard, .mic, .webcam, .texture => .dimension_2d,
+                                .texture => .dimension_2d,
                                 .cubemap => .dimension_cube,
                                 .writable => |w| switch (w) {
                                     .Cubemap => .dimension_cube,
@@ -677,7 +677,7 @@ pub const Renderer = struct {
                                 .volume => .dimension_3d,
 
                                 // TODO:
-                                .video, .music => .dimension_2d,
+                                .keyboard, .mic, .webcam, .video, .music => .dimension_2d,
                             } else .dimension_2d,
                             false,
                         ));
