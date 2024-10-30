@@ -123,19 +123,19 @@ pub const ToyMan = struct {
                         },
                         .File => |path| {
                             defer allocator.free(path);
-                            if (std.mem.eql(u8, path, "buffer1.glsl")) {
+                            if (std.mem.endsWith(u8, path, "buffer1.glsl")) {
                                 return .Buffer1;
                             }
-                            if (std.mem.eql(u8, path, "buffer2.glsl")) {
+                            if (std.mem.endsWith(u8, path, "buffer2.glsl")) {
                                 return .Buffer2;
                             }
-                            if (std.mem.eql(u8, path, "buffer3.glsl")) {
+                            if (std.mem.endsWith(u8, path, "buffer3.glsl")) {
                                 return .Buffer3;
                             }
-                            if (std.mem.eql(u8, path, "buffer4.glsl")) {
+                            if (std.mem.endsWith(u8, path, "buffer4.glsl")) {
                                 return .Buffer4;
                             }
-                            if (std.mem.eql(u8, path, "image.glsl")) {
+                            if (std.mem.endsWith(u8, path, "image.glsl")) {
                                 return .Image;
                             }
                             if (std.mem.eql(u8, path, "common.glsl")) {
