@@ -599,9 +599,10 @@ pub const Renderer = struct {
                                     .Cubemap => .dimension_cube,
                                     .BufferA, .BufferB, .BufferC, .BufferD => .dimension_2d,
                                 },
+                                .volume => .dimension_3d,
 
                                 // TODO:
-                                .volume, .video, .music => .dimension_2d,
+                                .video, .music => .dimension_2d,
                             } else .dimension_2d,
                             false,
                         ));
@@ -865,6 +866,43 @@ pub const Renderer = struct {
                     };
                 }
 
+                fn from_volume(device: *gpu.Device, queue: *gpu.Queue, vol: *Shadertoy.ActiveToy.Channel.Volume, label: [:0]const u8) @This() {
+                    var size = gpu.Extent3D{
+                        .width = vol.header.width,
+                        .height = vol.header.height,
+                        .depth_or_array_layers = vol.header.depth,
+                    };
+                    const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .label = label,
+                        .size = size,
+                        .dimension = .dimension_3d,
+                        .usage = .{
+                            .copy_dst = true,
+                            .texture_binding = true,
+                        },
+                        .format = switch (vol.typ) {
+                            .rgba => .rgba8_unorm,
+                            .r => .r8_unorm,
+                        },
+                    });
+                    const tex = device.createTexture(&tex_desc);
+
+                    queue.writeTexture(&.{
+                        .texture = tex,
+                    }, &.{
+                        .bytes_per_row = size.width * switch (vol.typ) {
+                            .r => @as(u32, 1),
+                            .rgba => @as(u32, 4),
+                        },
+                        .rows_per_image = size.height,
+                    }, &size, vol.get_data());
+
+                    return .{
+                        .texture = tex,
+                        .view = tex.createView(&.{}),
+                    };
+                }
+
                 fn from_img(device: *gpu.Device, queue: *gpu.Queue, img: *utils.ImageMagick.FloatImage, label: [:0]const u8) @This() {
                     const size = gpu.Extent3D{
                         .width = @intCast(img.width),
@@ -984,6 +1022,13 @@ pub const Renderer = struct {
                                 }, cubemap.name);
                             }
                         },
+                        .volume => |*vol| {
+                            const res = self.hm.getOrPut(vol.name) catch unreachable;
+                            if (!res.found_existing) {
+                                res.key_ptr.* = allocator.dupe(u8, vol.name) catch unreachable;
+                                res.value_ptr.* = Channel.Tex.from_volume(device, queue, &vol.vol, vol.name);
+                            }
+                        },
                         else => {},
                     }
                 }
@@ -1055,9 +1100,10 @@ pub const Renderer = struct {
                     .music => return &self.sound,
                     .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
                     .cubemap => |tex| return self.textures.hm.getPtr(tex.name).?,
+                    .volume => |vol| return self.textures.hm.getPtr(vol.name).?,
 
                     // TODO:
-                    .volume, .video, .mic, .webcam => return &self.empty_input.tex,
+                    .video, .mic, .webcam => return &self.empty_input.tex,
                 }
             }
 
@@ -1074,9 +1120,10 @@ pub const Renderer = struct {
                     .music => return &self.sound,
                     .texture => |tex| return self.textures.hm.getPtr(tex.name).?,
                     .cubemap => |tex| return self.textures.hm.getPtr(tex.name).?,
+                    .volume => |vol| return self.textures.hm.getPtr(vol.name).?,
 
                     // TODO:
-                    .volume, .video, .mic, .webcam => return &self.empty_input.tex,
+                    .video, .mic, .webcam => return &self.empty_input.tex,
                 }
             }
 

@@ -430,6 +430,7 @@ pub const ToyMan = struct {
                         var typ: enum {
                             d2,
                             cubemap,
+                            d3,
                         } = .d2;
                         if (maybe_inp.*) |inp| {
                             switch (inp.typ) {
@@ -448,15 +449,21 @@ pub const ToyMan = struct {
                                 .cubemap => {
                                     typ = .cubemap;
                                 },
+                                .volume => {
+                                    typ = .d3;
+                                },
 
                                 // TODO:
-                                .volume, .video, .music => {},
+                                .video, .music => {},
                             }
                         }
 
                         switch (typ) {
                             .d2 => {
                                 try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_2D", .{i}));
+                            },
+                            .d3 => {
+                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_3D", .{i}));
                             },
                             .cubemap => {
                                 try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_CUBEMAP", .{i}));
@@ -595,9 +602,10 @@ pub const ToyMan = struct {
                     },
                     .keyboard, .mic, .webcam, .texture => .d2,
                     .cubemap => .cube,
+                    .volume => .d3,
 
                     // TODO:
-                    .volume, .video, .music => .d2,
+                    .video, .music => .d2,
                 };
             }
 
@@ -803,6 +811,8 @@ pub const ToyMan = struct {
             const c = self.channels;
             try Typ.d2.function(w, c, .float, .texture, &[_]Arg{.vec2pos}, .vec4);
             try Typ.cube.function(w, c, .float, .texture, &[_]Arg{.vec3pos}, .vec4);
+            // TODO: i think volumes don't have vflip applied on shadertoy even if it is present in json
+            try Typ.d3.function(w, c, .none, .texture, &[_]Arg{.vec3pos}, .vec4);
             try Typ.d2.function(w, c, .float, .textureProj, &[_]Arg{.vec4pos}, .vec4);
             try Typ.d2.function(w, c, .none, .textureSize, &[_]Arg{.intlod}, .ivec2);
             try Typ.d2.function(w, c, .int, .texelFetch, &[_]Arg{ .ivec2pos, .intlod }, .vec4);
@@ -1113,11 +1123,60 @@ pub const ActiveToy = struct {
             img4: utils.ImageMagick.FloatImage,
             img5: utils.ImageMagick.FloatImage,
         },
+        volume: struct {
+            name: [:0]const u8,
+            vol: Volume,
+        },
 
         // TODO:
-        volume,
         video,
         music,
+
+        pub const Volume = struct {
+            // header is 20 bytes (32 * 32 * 32 is 32768 but file is 32788)
+            pub const Header = extern struct {
+                signature: u32,
+                width: u32,
+                height: u32,
+                depth: u32,
+                num_channels: u8,
+                _idk1: u8,
+                _idk2: u16,
+            };
+            pub const Typ = enum { r, rgba };
+
+            header: Header,
+            bytes: []u8,
+            typ: Typ,
+
+            pub fn from_bytes(bytes: []u8) !@This() {
+                var header: Header = undefined;
+                var header_buf: []u8 = undefined;
+                header_buf.ptr = @ptrCast(&header);
+                header_buf.len = @sizeOf(Header);
+                std.mem.copyForwards(u8, header_buf, bytes[0..@sizeOf(Header)]);
+
+                const data = bytes[@sizeOf(Header)..];
+
+                if (data.len != header.width * header.height * header.depth * header.num_channels) {
+                    return error.BadVolumeData;
+                }
+
+                return .{
+                    .header = header,
+                    .bytes = bytes,
+                    .typ = switch (header.num_channels) {
+                        1 => .r,
+                        4 => .rgba,
+                        else => return error.BadNumChannels,
+                    },
+                };
+            }
+
+            pub fn get_data(self: *@This()) []u8 {
+                return self.bytes[@sizeOf(Header)..];
+            }
+        };
 
         pub fn deinit(self: *@This()) void {
             switch (self.*) {
@@ -1133,6 +1192,10 @@ pub const ActiveToy = struct {
                     cube.img3.deinit();
                     cube.img4.deinit();
                     cube.img5.deinit();
+                },
+                .volume => |*vol| {
+                    allocator.free(vol.name);
+                    allocator.free(vol.vol.bytes);
                 },
                 else => {},
             }
@@ -1225,7 +1288,17 @@ pub const ActiveToy = struct {
                         .sampler = input.sampler,
                     };
                 },
-                .music, .video, .volume => {
+                .volume => {
+                    const vol = try cache.media_bytes(input.src);
+                    errdefer allocator.free(vol);
+
+                    const name = try allocator.dupeZ(u8, input.src);
+                    errdefer allocator.free(name);
+
+                    const volume = try Channel.Volume.from_bytes(vol);
+                    return .{ .typ = .{ .volume = .{ .vol = volume, .name = name } }, .sampler = input.sampler };
+                },
+                .music, .video => {
                     // TODO:
                     std.debug.print("did not handle ctype '{any}'\n", .{input.ctype});
                     return .{ .typ = .keyboard, .sampler = input.sampler };
@@ -1254,6 +1327,10 @@ pub const ActiveToy = struct {
                     cube.img4.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img4.buffer);
                     cube.img5.buffer = try allocator.dupe(utils.ImageMagick.Pixel(f32), cube.img5.buffer);
                     cube.name = try allocator.dupeZ(u8, cube.name);
+                },
+                .volume => |*vol| {
+                    vol.name = try allocator.dupeZ(u8, vol.name);
+                    vol.vol.bytes = try allocator.dupe(u8, vol.vol.bytes);
                 },
                 else => {},
             }
