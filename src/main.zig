@@ -246,7 +246,59 @@ pub const Renderer = struct {
         chan2: u32 = 0,
         chan3: u32 = 0,
 
-        fn from_inputs(inputs: *const Shadertoy.ActiveToy.Inputs) @This() {
+        // NOTE: these are vec4 on cpu and vec3 on gpu for padding reasons
+        chan0_res: Res = .{},
+        chan1_res: Res = .{},
+        chan2_res: Res = .{},
+        chan3_res: Res = .{},
+
+        const Res = extern struct {
+            x: f32 = 0,
+            y: f32 = 0,
+            z: f32 = 0,
+            w: f32 = 0,
+
+            fn update(self: *@This(), input: *const Shadertoy.ActiveToy.Input, width: u32, height: u32) void {
+                switch (input.typ) {
+                    .writable => |w| switch (w) {
+                        .Cubemap => {
+                            self.x = @floatFromInt(width);
+                            self.y = @floatFromInt(height);
+                            self.z = 6;
+                        },
+                        .BufferA, .BufferB, .BufferC, .BufferD => {
+                            self.x = @floatFromInt(width);
+                            self.y = @floatFromInt(height);
+                            self.z = 1;
+                        },
+                    },
+                    .cubemap => |*c| {
+                        self.x = @floatFromInt(c.img0.width);
+                        self.y = @floatFromInt(c.img0.height);
+                        self.z = 6;
+                    },
+                    .texture => |*t| {
+                        self.x = @floatFromInt(t.img.width);
+                        self.y = @floatFromInt(t.img.height);
+                        self.z = 1;
+                    },
+                    .volume => |*v| {
+                        self.x = @floatFromInt(v.vol.header.width);
+                        self.y = @floatFromInt(v.vol.header.height);
+                        self.z = @floatFromInt(v.vol.header.depth);
+                    },
+
+                    // // TODO:
+                    .video, .music, .keyboard, .mic, .webcam => {
+                        self.x = 1;
+                        self.y = 1;
+                        self.z = 1;
+                    },
+                }
+            }
+        };
+
+        fn from_inputs(inputs: *const Shadertoy.ActiveToy.Inputs, width: u32, height: u32) @This() {
             var uniforms = @This(){};
 
             if (inputs.input1) |inp| {
@@ -262,7 +314,24 @@ pub const Renderer = struct {
                 uniforms.chan3 = @intFromBool(inp.sampler.vflip == .true);
             }
 
+            uniforms.update(inputs, width, height);
+
             return uniforms;
+        }
+
+        fn update(self: *@This(), inputs: *const Shadertoy.ActiveToy.Inputs, width: u32, height: u32) void {
+            if (inputs.input1) |inp| {
+                self.chan0_res.update(&inp, width, height);
+            }
+            if (inputs.input2) |inp| {
+                self.chan1_res.update(&inp, width, height);
+            }
+            if (inputs.input3) |inp| {
+                self.chan2_res.update(&inp, width, height);
+            }
+            if (inputs.input4) |inp| {
+                self.chan3_res.update(&inp, width, height);
+            }
         }
     };
     const ShadertoyUniformBuffers = struct {
@@ -405,7 +474,10 @@ pub const Renderer = struct {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
-                var inputs = Pass.Inputs.init(device, &at.passes.image.inputs);
+                const height = core_mod.get(core.main_window, .height).?;
+                const width = core_mod.get(core.main_window, .width).?;
+
+                var inputs = Pass.Inputs.init(device, &at.passes.image.inputs, width, height);
                 errdefer inputs.release();
                 var bind = try Pass.create_bind_group(device, binding, channels, &inputs);
                 errdefer {
@@ -491,9 +563,9 @@ pub const Renderer = struct {
                 input4: ?Input,
                 uniform: *Buffer(ChannelUniforms),
 
-                fn init(device: *gpu.Device, inputs: *const Shadertoy.ActiveToy.Inputs) @This() {
+                fn init(device: *gpu.Device, inputs: *const Shadertoy.ActiveToy.Inputs, width: u32, height: u32) @This() {
                     return .{
-                        .uniform = Buffer(ChannelUniforms).new("channel uniform", ChannelUniforms.from_inputs(inputs), allocator, device) catch unreachable,
+                        .uniform = Buffer(ChannelUniforms).new("channel uniform", ChannelUniforms.from_inputs(inputs, width, height), allocator, device) catch unreachable,
                         .input1 = Input.init(device, inputs.input1),
                         .input2 = Input.init(device, inputs.input2),
                         .input3 = Input.init(device, inputs.input3),
@@ -529,7 +601,10 @@ pub const Renderer = struct {
                 const core: *mach.Core = core_mod.state();
                 const device = core.device;
 
-                var inputs = Inputs.init(device, &pass.inputs);
+                const height = core_mod.get(core.main_window, .height).?;
+                const width = core_mod.get(core.main_window, .width).?;
+
+                var inputs = Inputs.init(device, &pass.inputs, width, height);
                 var bind = try create_bind_group(device, binding, channels, &inputs);
                 errdefer {
                     bind.group1.release();
@@ -1291,14 +1366,28 @@ pub const Renderer = struct {
 
             self.pass.release();
             self.pass = new;
+
+            self.update_uniforms(&comp.toy);
         }
 
         fn resize(self: *@This(), device: *gpu.Device, queue: *gpu.Queue, at: *Shadertoy.ActiveToy) void {
+            const width = self.uniforms.uniforms.val.width;
+            const height = self.uniforms.uniforms.val.height;
             self.buffers.release();
             self.buffers = Buffers.init(device, queue, .{
-                .width = self.uniforms.uniforms.val.width,
-                .height = self.uniforms.uniforms.val.height,
+                .width = width,
+                .height = height,
             }, at);
+        }
+
+        fn update_uniforms(self: *@This(), at: *Shadertoy.ActiveToy) void {
+            const width = self.uniforms.uniforms.val.width;
+            const height = self.uniforms.uniforms.val.height;
+            self.pass.image.inputs.uniform.val.update(&at.passes.image.inputs, width, height);
+            if (self.pass.buffer1) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer1.?.inputs, width, height);
+            if (self.pass.buffer2) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer2.?.inputs, width, height);
+            if (self.pass.buffer3) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer3.?.inputs, width, height);
+            if (self.pass.buffer4) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer4.?.inputs, width, height);
         }
 
         fn swap(self: *@This()) void {

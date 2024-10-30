@@ -36,6 +36,7 @@ uniform Uniforms {
 layout(set = 0, binding = 1)
 uniform ChannelUniforms {
     ivec4 vflips;
+    vec3 iChannelResolution[4];
 };
 
 // TODO: sound :}
