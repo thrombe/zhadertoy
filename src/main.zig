@@ -1983,6 +1983,7 @@ pub fn main() !void {
     // try Glslc.testfn();
     // try Shadertoy.testfn();
     // try FsFuse.testfn();
+    // try Shadertoy.ToyMan.Generator.testfn();
     // if (true) {
     //     return;
     // }

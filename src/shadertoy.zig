@@ -530,6 +530,296 @@ pub const ToyMan = struct {
         All,
     };
 
+    // generate glsl glue code for shadertoy to work properly with vulkan glsl
+    //
+    // struct ZhaderChannel2D { int id; };
+    // ZhaderChannel2D iChannel0 = {0};
+    // ZhaderChannel2D iChannel2 = {2};
+    // texture(ZhaderChannel2D chan) {
+    //   if (chan.id == 0) {
+    //     return texture(zhader_channel0);
+    //   }
+    //   if (chan.id == 2) {
+    //     return texture(zhader_channel2);
+    //   }
+    //
+    //   return vec4(0.0);
+    // }
+    // #define sampler2D ZhaderChannel2D
+    pub const Generator = struct {
+        channels: [4]Typ,
+
+        pub fn testfn() !void {
+            var gen: @This() = .{
+                .channels = [_]Typ{ .d2, .d2, .d2, .d2 },
+            };
+
+            try gen.generate(2);
+        }
+
+        fn from(inputs: *const ActiveToy.Inputs) @This() {
+            var gen: @This() = .{
+                .channels = [_]Typ{ .d2, .d2, .d2, .d2 },
+            };
+
+            if (inputs.input1) |inp| {
+                gen.channels[0] = Typ.from(&inp.typ);
+            }
+            if (inputs.input2) |inp| {
+                gen.channels[1] = Typ.from(&inp.typ);
+            }
+            if (inputs.input3) |inp| {
+                gen.channels[2] = Typ.from(&inp.typ);
+            }
+            if (inputs.input4) |inp| {
+                gen.channels[3] = Typ.from(&inp.typ);
+            }
+
+            return gen;
+        }
+
+        var arena: std.mem.Allocator = undefined;
+
+        const Writer = std.ArrayList(u8).Writer;
+
+        const Typ = enum {
+            d2,
+            d3,
+            cube,
+
+            fn from(t: *const ActiveToy.Channel) @This() {
+                return switch (t.*) {
+                    .writable => |w| switch (w) {
+                        .Cubemap => .cube,
+                        .BufferA, .BufferB, .BufferC, .BufferD => .d2,
+                    },
+                    .keyboard, .mic, .webcam, .texture => .d2,
+                    .cubemap => .cube,
+
+                    // TODO:
+                    .volume, .video, .music => .d2,
+                };
+            }
+
+            fn name(self: @This()) []const u8 {
+                return switch (self) {
+                    .d2 => "2D",
+                    .d3 => "3D",
+                    .cube => "Cube",
+                };
+            }
+
+            fn texture_coord_type(self: @This()) []const u8 {
+                return switch (self) {
+                    .d2 => "vec2",
+                    .d3 => "vec3",
+                    .cube => "vec3",
+                };
+            }
+
+            fn struct_name(self: @This()) []const u8 {
+                return switch (self) {
+                    .d2 => "ZhaderChannel2D",
+                    .d3 => "ZhaderChannel3D",
+                    .cube => "ZhaderChannelCube",
+                };
+            }
+
+            fn struct_decl(self: @This(), w: Writer) !void {
+                try w.print(
+                    \\ struct {s} {{
+                    \\     int id;
+                    \\ }};
+                    \\
+                , .{self.struct_name()});
+            }
+
+            fn binding(self: @This(), w: Writer, chan: u32, i: u32, j: u32) !void {
+                try w.print(
+                    \\ layout(set = 0, binding = {d}) uniform texture{s} zhader_channel_{d};
+                    \\ layout(set = 0, binding = {d}) uniform sampler zhader_sampler_{d};
+                    \\
+                , .{ i, self.name(), chan, j, chan });
+            }
+
+            fn type_define(self: @This(), w: Writer) !void {
+                try w.print(
+                    \\ #define sampler{s} {s}
+                    \\
+                , .{ self.name(), self.struct_name() });
+            }
+
+            fn channel_var(self: @This(), w: Writer, chan: u32) !void {
+                try w.print(
+                    \\ {s} iChannel{d} = {{ {d} }};
+                    \\
+                , .{ self.struct_name(), chan, chan });
+            }
+
+            fn function(self: @This(), w: Writer, channels: [4]@This(), vflip: enum { none, float, int }, func: Func, args: []const Arg, ret: ReturnType) !void {
+                try w.print(" {s} {s}({s} chan", .{ @tagName(ret), @tagName(func), self.struct_name() });
+                for (args) |arg| {
+                    try w.print(", {s}", .{arg.decl()});
+                }
+                try w.print(") {{\n", .{});
+
+                for (channels, 0..) |chan, i| {
+                    if (self == chan) {
+                        try w.print(
+                            \\     if (chan.id == {d}) {{
+                            \\
+                        , .{i});
+
+                        switch (vflip) {
+                            .none => {},
+                            .float => {
+                                try w.print(
+                                    \\         if (vflips[{d}] == 1) {{
+                                    \\             pos.y = 1.0 - pos.y;
+                                    \\         }}
+                                    \\
+                                    \\
+                                , .{i});
+                            },
+                            .int => {
+                                try w.print(
+                                    \\         if (vflips[{d}] == 1) {{
+                                    \\             pos.y = textureSize(chan, lod).y - pos.y - 1;
+                                    \\         }}
+                                    \\
+                                    \\
+                                , .{i});
+                            },
+                        }
+
+                        try w.print(
+                            \\         return {s}(sampler{s}(zhader_channel_{d}, zhader_sampler_{d})
+                        , .{ @tagName(func), self.name(), i, i });
+
+                        for (args) |arg| {
+                            try w.print(", {s}", .{arg.name()});
+                        }
+
+                        try w.print(");\n", .{});
+                        try w.print(
+                            \\     }}
+                            \\
+                        , .{});
+                    }
+                }
+
+                try w.print(
+                    \\
+                    \\     return {s}(0);
+                    \\ }}
+                    \\
+                , .{@tagName(ret)});
+            }
+        };
+        const Arg = enum {
+            vec2pos,
+            ivec2pos,
+            vec3pos,
+            vec4pos,
+            vec2dpdx,
+            vec2dpdy,
+            intlod,
+            floatlod,
+
+            fn typ(self: @This()) []const u8 {
+                return switch (self) {
+                    .vec2pos => "vec2",
+                    .ivec2pos => "ivec2",
+                    .vec3pos => "vec3",
+                    .vec4pos => "vec4",
+                    .vec2dpdx => "vec2",
+                    .vec2dpdy => "vec2",
+                    .intlod => "int",
+                    .floatlod => "float",
+                };
+            }
+
+            fn name(self: @This()) []const u8 {
+                return switch (self) {
+                    .vec2pos => "pos",
+                    .ivec2pos => "pos",
+                    .vec3pos => "pos",
+                    .vec4pos => "pos",
+                    .vec2dpdx => "dpdx",
+                    .vec2dpdy => "dpdy",
+                    .intlod => "lod",
+                    .floatlod => "lod",
+                };
+            }
+
+            fn decl(self: @This()) []const u8 {
+                return switch (self) {
+                    .vec2pos => "vec2 pos",
+                    .ivec2pos => "ivec2 pos",
+                    .vec3pos => "vec3 pos",
+                    .vec4pos => "vec4 pos",
+                    .vec2dpdx => "vec2 dpdx",
+                    .vec2dpdy => "vec2 dpdy",
+                    .intlod => "int lod",
+                    .floatlod => "float lod",
+                };
+            }
+        };
+        const Func = enum {
+            texture,
+            textureSize,
+            texelFetch,
+            textureQueryLevels,
+            textureLod,
+            textureProj,
+            textureGather,
+            textureGrad,
+            textureQueryLod,
+        };
+        const ReturnType = enum {
+            vec4,
+            ivec4,
+            ivec2,
+            vec2,
+            int,
+        };
+
+        fn generate(self: *@This(), binding_start: u32) ![]const u8 {
+            var code = std.ArrayList(u8).init(allocator);
+            errdefer code.deinit();
+            const w = code.writer();
+
+            try Typ.d2.struct_decl(w);
+            try Typ.d3.struct_decl(w);
+            try Typ.cube.struct_decl(w);
+
+            var binding: u32 = binding_start;
+            for (self.channels, 0..) |chan, i| {
+                defer binding += 2;
+                try chan.binding(w, @intCast(i), binding, binding + 1);
+                try chan.channel_var(w, @intCast(i));
+            }
+
+            const c = self.channels;
+            try Typ.d2.function(w, c, .float, .texture, &[_]Arg{.vec2pos}, .vec4);
+            try Typ.cube.function(w, c, .float, .texture, &[_]Arg{.vec3pos}, .vec4);
+            try Typ.d2.function(w, c, .float, .textureProj, &[_]Arg{.vec4pos}, .vec4);
+            try Typ.d2.function(w, c, .none, .textureSize, &[_]Arg{.intlod}, .ivec2);
+            try Typ.d2.function(w, c, .int, .texelFetch, &[_]Arg{ .ivec2pos, .intlod }, .vec4);
+            try Typ.d2.function(w, c, .float, .textureLod, &[_]Arg{ .vec2pos, .floatlod }, .vec4);
+            try Typ.d2.function(w, c, .float, .textureGrad, &[_]Arg{ .vec2pos, .vec2dpdx, .vec2dpdy }, .vec4);
+            try Typ.d2.function(w, c, .float, .textureGather, &[_]Arg{.vec2pos}, .vec4);
+            try Typ.d2.function(w, c, .none, .textureQueryLevels, &[_]Arg{}, .int);
+            try Typ.d2.function(w, c, .float, .textureQueryLod, &[_]Arg{.vec2pos}, .vec2);
+
+            try Typ.d2.type_define(w);
+            try Typ.d3.type_define(w);
+            try Typ.cube.type_define(w);
+
+            return try code.toOwnedSlice();
+        }
+    };
+
     // path where the toy should be simlinked
     playground: []const u8,
     shader_fuse: *FsFuse,
@@ -705,9 +995,30 @@ pub const ToyMan = struct {
                         try buf.writeAll(pass.code);
                     }
 
+                    var inputs = try ActiveToy.Inputs.from(pass.inputs, cache);
+                    errdefer inputs.deinit();
+
+                    var gen = Generator.from(&inputs);
+                    const generated = try gen.generate(2);
+                    defer allocator.free(generated);
+
+                    const gen_name = try std.fmt.allocPrint(
+                        allocator,
+                        "generated_{s}",
+                        .{name},
+                    );
+                    defer allocator.free(gen_name);
+
+                    if (prep) {
+                        var buf = try dir.createFile(gen_name, .{});
+                        defer buf.close();
+
+                        try buf.writeAll(generated);
+                    }
+
                     buffer.* = .{
                         .output = out_buf,
-                        .inputs = try ActiveToy.Inputs.from(pass.inputs, cache),
+                        .inputs = inputs,
                     };
                 },
                 .image => {
@@ -718,13 +1029,28 @@ pub const ToyMan = struct {
                         try buf.writeAll(pass.code);
                     }
 
-                    t.passes.image.inputs = try ActiveToy.Inputs.from(pass.inputs, cache);
+                    var inputs = try ActiveToy.Inputs.from(pass.inputs, cache);
+                    errdefer inputs.deinit();
+
+                    var gen = Generator.from(&inputs);
+                    const generated = try gen.generate(2);
+                    defer allocator.free(generated);
+
+                    if (prep) {
+                        var buf = try dir.createFile("generated_image.glsl", .{});
+                        defer buf.close();
+
+                        try buf.writeAll(generated);
+                    }
+
+                    t.passes.image.inputs = inputs;
                 },
                 else => {
                     std.debug.print("unimplemented renderpass type: {any}\n", .{pass.type});
                 },
             }
         }
+        t.mark_current_frame_inputs();
 
         if (prep) {
             var vert = try dir.createFile("vert.glsl", .{});
@@ -753,7 +1079,6 @@ pub const ToyMan = struct {
             );
         }
 
-        t.mark_current_frame_inputs();
         return t;
     }
 };

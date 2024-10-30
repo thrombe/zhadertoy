@@ -44,120 +44,25 @@ float iSampleRate = 4800.0;
 
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
+#ifdef ZHADER_INCLUDE_IMAGE
+    #include "generated_image.glsl"
+#endif // ZHADER_INCLUDE_IMAGE
 
-#define ZHADER_CHANNEL_2D(index, binding1, binding2) \
-    layout(set = 0, binding = binding1) \
-    uniform texture2D zhader_channel_##index; \
-    layout(set = 0, binding = binding2) \
-    uniform sampler zhader_sampler_##index; \
-    struct ZhaderChannel##index { \
-        int a; \
-    }; \
-    ZhaderChannel##index iChannel##index; \
-    vec4 texture(ZhaderChannel##index chan, vec2 pos) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return texture(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
-    } \
-    vec4 textureProj(ZhaderChannel##index chan, vec4 pos) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return textureProj(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
-    } \
-    ivec2 textureSize(ZhaderChannel##index chan, int lod) { \
-        return textureSize(sampler2D(zhader_channel_##index, zhader_sampler_##index), lod); \
-    } \
-    vec4 texelFetch(ZhaderChannel##index chan, ivec2 pos, int lod) { \
-        if (vflips[index] == 1) { \
-            pos.y = textureSize(chan, lod).y - pos.y - 1; \
-        } \
-        return texelFetch(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
-    } \
-    vec4 textureLod(ZhaderChannel##index chan, vec2 pos, float lod) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return textureLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, lod); \
-    } \
-    vec4 textureGrad(ZhaderChannel##index chan, vec2 pos, vec2 dpdx, vec2 dpdy) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return textureGrad(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos, dpdx, dpdy); \
-    } \
-    vec4 textureGather(ZhaderChannel##index chan, vec2 pos) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return textureGather(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
-    } \
-    int textureQueryLevels(ZhaderChannel##index chan) { \
-        return textureQueryLevels(sampler2D(zhader_channel_##index, zhader_sampler_##index)); \
-    } \
-    vec2 textureQueryLod(ZhaderChannel##index chan, vec2 pos) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return textureQueryLod(sampler2D(zhader_channel_##index, zhader_sampler_##index), pos); \
-    }
+#ifdef ZHADER_INCLUDE_BUF1
+    #include "generated_buffer1.glsl"
+#endif // ZHADER_INCLUDE_BUF1
 
-#define ZHADER_CHANNEL_CUBEMAP(index, binding1, binding2) \
-    layout(set = 0, binding = binding1) \
-    uniform textureCube zhader_channel_##index; \
-    layout(set = 0, binding = binding2) \
-    uniform sampler zhader_sampler_##index; \
-    struct ZhaderChannel##index { \
-        int a; \
-    }; \
-    ZhaderChannel##index iChannel##index; \
-    vec4 texture(ZhaderChannel##index chan, vec3 pos) { \
-        if (vflips[index] == 1) { \
-            pos.y = 1.0 - pos.y; \
-        } \
-        return texture(samplerCube(zhader_channel_##index, zhader_sampler_##index), pos); \
-    }
+#ifdef ZHADER_INCLUDE_BUF2
+    #include "generated_buffer2.glsl"
+#endif // ZHADER_INCLUDE_BUF2
 
-#ifdef ZHADER_CHANNEL0
-    #ifdef ZHADER_CHANNEL0_2D
-        ZHADER_CHANNEL_2D(0, 2, 3)
-    #endif // ZHADER_CHANNEL0_2D
+#ifdef ZHADER_INCLUDE_BUF3
+    #include "generated_buffer3.glsl"
+#endif // ZHADER_INCLUDE_BUF3
 
-    #ifdef ZHADER_CHANNEL0_CUBEMAP
-        ZHADER_CHANNEL_CUBEMAP(0, 2, 3)
-    #endif // ZHADER_CHANNEL0_CUBEMAP
-#endif // ZHADER_CHANNEL0
-
-#ifdef ZHADER_CHANNEL1
-    #ifdef ZHADER_CHANNEL1_2D
-        ZHADER_CHANNEL_2D(1, 4, 5)
-    #endif // ZHADER_CHANNEL1_2D
-
-    #ifdef ZHADER_CHANNEL1_CUBEMAP
-        ZHADER_CHANNEL_CUBEMAP(1, 4, 5)
-    #endif // ZHADER_CHANNEL1_CUBEMAP
-#endif // ZHADER_CHANNEL1
-
-#ifdef ZHADER_CHANNEL2
-    #ifdef ZHADER_CHANNEL2_2D
-        ZHADER_CHANNEL_2D(2, 6, 7)
-    #endif // ZHADER_CHANNEL2_2D
-
-    #ifdef ZHADER_CHANNEL2_CUBEMAP
-        ZHADER_CHANNEL_CUBEMAP(2, 6, 7)
-    #endif // ZHADER_CHANNEL2_CUBEMAP
-#endif // ZHADER_CHANNEL2
-
-#ifdef ZHADER_CHANNEL3
-    #ifdef ZHADER_CHANNEL3_2D
-        ZHADER_CHANNEL_2D(3, 8, 9)
-    #endif // ZHADER_CHANNEL3_2D
-
-    #ifdef ZHADER_CHANNEL3_CUBEMAP
-        ZHADER_CHANNEL_CUBEMAP(3, 8, 9)
-    #endif // ZHADER_CHANNEL3_CUBEMAP
-#endif // ZHADER_CHANNEL3
+#ifdef ZHADER_INCLUDE_BUF4
+    #include "generated_buffer4.glsl"
+#endif // ZHADER_INCLUDE_BUF4
 
 #ifdef ZHADER_INCLUDE_SCREEN
     layout(set = 0, binding = 1)
@@ -167,9 +72,18 @@ float iSampleRate = 4800.0;
     #define screen sampler2D(screen_tex, screen_sampler)
 #endif // ZHADER_INCLUDE_SCREEN
 
-// NOTE: 'sampler' is reserved in vulkan glsl
+// NOTE: reserved keywords in vulkan glsl
 #define sampler zhader_sampler
 #define textureCube zhader_textureCube
+#define buffer zhader_buffer
+#define packUnorm2x16 zhader_packUnorm2x16
+#define packSnorm2x16 zhader_packSnorm2x16
+#define packUnorm4x8 zhader_packUnorm4x8
+#define packSnorm4x8 zhader_packSnorm4x8
+#define unpackUnorm2x16 zhader_unpackUnorm2x16
+#define unpackSnorm2x16 zhader_unpackSnorm2x16
+#define unpackUnorm4x8 zhader_unpackUnorm4x8
+#define unpackSnorm4x8 zhader_unpackSnorm4x8
 
 // NOTE: wgsl has isnan, and it's defined here too - but it won't compile
 #define isnan isNan
@@ -199,14 +113,6 @@ bool isInf(double x) {
     return (x > ZHADER_INF || x < -ZHADER_INF);
 }
  
-#ifdef ZHADER_INCLUDE_SCREEN
-    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-        vec2 pos = fragCoord/iResolution.xy;
-        pos.y = 1.0 - pos.y;
-        fragColor = texture(screen, pos);
-    }
-#endif // ZHADER_INCLUDE_SCREEN
-
 #ifdef ZHADER_COMMON
     #include "common.glsl"
 #endif // ZHADER_COMMON
@@ -230,6 +136,14 @@ bool isInf(double x) {
 #ifdef ZHADER_INCLUDE_BUF4
     #include "buffer4.glsl"
 #endif // ZHADER_INCLUDE_BUF4
+
+#ifdef ZHADER_INCLUDE_SCREEN
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec2 pos = fragCoord/iResolution.xy;
+        pos.y = 1.0 - pos.y;
+        fragColor = texture(screen, pos);
+    }
+#endif // ZHADER_INCLUDE_SCREEN
 
 layout(location = 0) in vec2 fragCoord;
 layout(location = 0) out vec4 fragColor;
