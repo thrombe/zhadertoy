@@ -182,7 +182,7 @@ layout(location = 0) out vec4 fragColor;
 void main() {
     // [-1, 1] -> [0, 1]
     // vec2 pix = vec2(fragCoord.xy / 2.0 + 0.5) * iResolution.xy;
-    vec2 pix = gl_FragCoord.xy;
+    vec2 pix = vec2(gl_FragCoord.x, iResolution.y - gl_FragCoord.y);
 
     mainImage(fragColor, pix);
 }
