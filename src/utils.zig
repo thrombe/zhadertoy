@@ -415,14 +415,14 @@ pub const FsFuse = struct {
                             continue;
                         }
                         const name = c.fsw_get_event_flag_name(f);
-                        std.debug.print("Path: {s}\n", .{event.path});
-                        std.debug.print("Event Type: {s}\n", .{std.mem.span(name)});
+                        // std.debug.print("Path: {s}\n", .{event.path});
+                        // std.debug.print("Event Type: {s}\n", .{std.mem.span(name)});
 
                         if (ctx) |cctx| {
                             const stripped = std.fs.path.relative(allocator, cctx.path, std.mem.span(event.path)) catch unreachable;
                             cctx.channel.send(.{ .File = stripped }) catch unreachable;
                         } else {
-                            std.debug.print("Error: Event ignored!", .{});
+                            std.debug.print("Error: Event ignored! type: '{s}' path: '{s}'", .{ event.path, name });
                         }
                     }
                 }
