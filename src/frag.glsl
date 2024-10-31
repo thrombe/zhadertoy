@@ -37,6 +37,7 @@ layout(set = 0, binding = 1)
 uniform ChannelUniforms {
     ivec4 vflips;
     vec3 iChannelResolution[4];
+    int cubemap_pass;
 };
 
 // TODO: sound :}
@@ -45,10 +46,6 @@ float iSampleRate = 4800.0;
 
 // - [[glsl-in] Consider supporting combined image/samplers · Issue #4342 · gfx-rs/wgpu · GitHub](https://github.com/gfx-rs/wgpu/issues/4342)
 // - [GLSL: Add option to separate combined image samplers when emitting GLSL · Issue #2236 · KhronosGroup/SPIRV-Cross · GitHub](https://github.com/KhronosGroup/SPIRV-Cross/issues/2236)
-#ifdef ZHADER_INCLUDE_IMAGE
-    #include "generated_image.glsl"
-#endif // ZHADER_INCLUDE_IMAGE
-
 #ifdef ZHADER_INCLUDE_BUF1
     #include "generated_buffer1.glsl"
 #endif // ZHADER_INCLUDE_BUF1
@@ -64,6 +61,14 @@ float iSampleRate = 4800.0;
 #ifdef ZHADER_INCLUDE_BUF4
     #include "generated_buffer4.glsl"
 #endif // ZHADER_INCLUDE_BUF4
+
+#ifdef ZHADER_INCLUDE_CUBEMAP
+    #include "generated_cubemap.glsl"
+#endif // ZHADER_INCLUDE_CUBEMAP
+
+#ifdef ZHADER_INCLUDE_IMAGE
+    #include "generated_image.glsl"
+#endif // ZHADER_INCLUDE_IMAGE
 
 #ifdef ZHADER_INCLUDE_SCREEN
     layout(set = 0, binding = 1)
@@ -118,10 +123,6 @@ bool isInf(double x) {
     #include "common.glsl"
 #endif // ZHADER_COMMON
 
-#ifdef ZHADER_INCLUDE_IMAGE
-    #include "image.glsl"
-#endif // ZHADER_INCLUDE_IMAGE
-
 #ifdef ZHADER_INCLUDE_BUF1
     #include "buffer1.glsl"
 #endif // ZHADER_INCLUDE_BUF1
@@ -138,6 +139,36 @@ bool isInf(double x) {
     #include "buffer4.glsl"
 #endif // ZHADER_INCLUDE_BUF4
 
+#ifdef ZHADER_INCLUDE_CUBEMAP
+    vec3 cubemap_res = vec3(1024.0, 1024.0, 1.0);
+    #define iResolution cubemap_res
+
+    #include "cubemap.glsl"
+
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec2 pos = fragCoord/iResolution.xy;
+        // pos.y = 1.0 - pos.y;
+
+        vec3 ray_dir;
+        switch (cubemap_pass) {
+        case 0: ray_dir = vec3(1.0, 0.0, 0.0); break;
+        case 1: ray_dir = vec3(-1.0, 0.0, 0.0); break;
+        case 2: ray_dir = vec3(0.0, -1.0, 0.0); break;
+        case 3: ray_dir = vec3(0.0, 1.0, 0.0); break;
+        case 4: ray_dir = vec3(0.0, 0.0, 1.0); break;
+        case 5: ray_dir = vec3(0.0, 0.0, -1.0); break;
+        default: fragColor = vec4(0.0); return;
+        }
+        ray_dir = normalize(ray_dir);
+
+        mainCubemap(fragColor, fragCoord, vec3(0, 0, 0), ray_dir);
+    }
+#endif // ZHADER_INCLUDE_CUBEMAP
+
+#ifdef ZHADER_INCLUDE_IMAGE
+    #include "image.glsl"
+#endif // ZHADER_INCLUDE_IMAGE
+
 #ifdef ZHADER_INCLUDE_SCREEN
     void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         vec2 pos = fragCoord/iResolution.xy;
@@ -149,10 +180,9 @@ bool isInf(double x) {
 layout(location = 0) in vec2 fragCoord;
 layout(location = 0) out vec4 fragColor;
 void main() {
-    vec2 res = iResolution.xy;
-    vec2 pix = vec2(fragCoord.xy / 2.0 + 0.5) * res;
+    // [-1, 1] -> [0, 1]
+    // vec2 pix = vec2(fragCoord.xy / 2.0 + 0.5) * iResolution.xy;
+    vec2 pix = gl_FragCoord.xy;
 
-    // vec2 pix = iResolution.xy * fragCoord;
-    // vec2 pix = gl_FragCoord.xy;
     mainImage(fragColor, pix);
 }

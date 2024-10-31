@@ -66,6 +66,7 @@ pub const ToyMan = struct {
         buffer2: *ActiveToy.Inputs,
         buffer3: *ActiveToy.Inputs,
         buffer4: *ActiveToy.Inputs,
+        cubemap: *ActiveToy.Inputs,
     };
     pub const CompiledShader = struct {
         vert: []u32,
@@ -80,6 +81,7 @@ pub const ToyMan = struct {
 
         screen: []u32,
         image: []u32,
+        cubemap: ?[]u32 = null,
         buffer1: ?[]u32 = null,
         buffer2: ?[]u32 = null,
         buffer3: ?[]u32 = null,
@@ -93,6 +95,7 @@ pub const ToyMan = struct {
             if (self.buffer2) |buf| allocator.free(buf);
             if (self.buffer3) |buf| allocator.free(buf);
             if (self.buffer4) |buf| allocator.free(buf);
+            if (self.cubemap) |buf| allocator.free(buf);
             self.toy.deinit();
         }
 
@@ -134,6 +137,9 @@ pub const ToyMan = struct {
                             }
                             if (std.mem.endsWith(u8, path, "buffer4.glsl")) {
                                 return .Buffer4;
+                            }
+                            if (std.mem.endsWith(u8, path, "cubemap.glsl")) {
+                                return .Cubemap;
                             }
                             if (std.mem.endsWith(u8, path, "image.glsl")) {
                                 return .Image;
@@ -203,6 +209,17 @@ pub const ToyMan = struct {
                             allocator.free(buf);
                         }
                     },
+                    .Cubemap => {
+                        self.compiled.?.mutex.lock();
+                        defer self.compiled.?.mutex.unlock();
+
+                        if (self.compiled.?.cubemap) |buf| {
+                            self.compiled.?.cubemap = try self.compile(.{
+                                .cubemap = &at.passes.cubemap.?,
+                            }, at.has_common);
+                            allocator.free(buf);
+                        }
+                    },
                     .Image => {
                         self.compiled.?.mutex.lock();
                         defer self.compiled.?.mutex.unlock();
@@ -246,6 +263,9 @@ pub const ToyMan = struct {
                         }, at.has_common);
                         if (at.passes.buffer4) |_| compiled.buffer4 = try self.compile(.{
                             .buffer4 = &at.passes.buffer4.?.inputs,
+                        }, at.has_common);
+                        if (at.passes.cubemap) |_| compiled.cubemap = try self.compile(.{
+                            .cubemap = &at.passes.cubemap.?,
                         }, at.has_common);
 
                         _ = compiled.input_fuse.fuse();
@@ -414,8 +434,6 @@ pub const ToyMan = struct {
                 try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
             }
 
-            // TODO: cubemap pass not implemented.
-            // i can't find many cubemap pass shaders to test :/
             try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (meta) {
                 .screen => "SCREEN",
                 .image => "IMAGE",
@@ -423,6 +441,7 @@ pub const ToyMan = struct {
                 .buffer2 => "BUF2",
                 .buffer3 => "BUF3",
                 .buffer4 => "BUF4",
+                .cubemap => "CUBEMAP",
             }}));
 
             var compiler = Glslc.Compiler{ .opt = render_config.shader_compile_opt };
@@ -474,6 +493,7 @@ pub const ToyMan = struct {
         Buffer2,
         Buffer3,
         Buffer4,
+        Cubemap,
         Image,
         All,
     };
@@ -996,6 +1016,30 @@ pub const ToyMan = struct {
 
                     t.passes.image.inputs = inputs;
                 },
+                .cubemap => {
+                    if (prep) {
+                        var buf = try dir.createFile("cubemap.glsl", .{});
+                        defer buf.close();
+
+                        try buf.writeAll(pass.code);
+                    }
+
+                    var inputs = try ActiveToy.Inputs.from(pass.inputs, cache);
+                    errdefer inputs.deinit();
+
+                    var gen = Generator.from(&inputs);
+                    const generated = try gen.generate(2);
+                    defer allocator.free(generated);
+
+                    if (prep) {
+                        var buf = try dir.createFile("generated_cubemap.glsl", .{});
+                        defer buf.close();
+
+                        try buf.writeAll(generated);
+                    }
+
+                    t.passes.cubemap = inputs;
+                },
                 else => {
                     std.debug.print("unimplemented renderpass type: {any}\n", .{pass.type});
                 },
@@ -1374,6 +1418,7 @@ pub const ActiveToy = struct {
         buffer2: ?BufferPass = null,
         buffer3: ?BufferPass = null,
         buffer4: ?BufferPass = null,
+        cubemap: ?Inputs = null,
     } = .{},
 
     // any pass can take input of any buffer.
@@ -1390,6 +1435,9 @@ pub const ActiveToy = struct {
             if (self.passes.buffer4) |*buf1| {
                 buf1.inputs.mark_current_frame_input(buf.output);
             }
+            if (self.passes.cubemap) |*buf1| {
+                buf1.mark_current_frame_input(buf.output);
+            }
             self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer2) |*buf| {
@@ -1399,16 +1447,28 @@ pub const ActiveToy = struct {
             if (self.passes.buffer4) |*buf1| {
                 buf1.inputs.mark_current_frame_input(buf.output);
             }
+            if (self.passes.cubemap) |*buf1| {
+                buf1.mark_current_frame_input(buf.output);
+            }
             self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer3) |*buf| {
             if (self.passes.buffer4) |*buf1| {
                 buf1.inputs.mark_current_frame_input(buf.output);
             }
+            if (self.passes.cubemap) |*buf1| {
+                buf1.mark_current_frame_input(buf.output);
+            }
             self.passes.image.inputs.mark_current_frame_input(buf.output);
         }
         if (self.passes.buffer4) |*buf| {
+            if (self.passes.cubemap) |*buf1| {
+                buf1.mark_current_frame_input(buf.output);
+            }
             self.passes.image.inputs.mark_current_frame_input(buf.output);
+        }
+        if (self.passes.cubemap) |_| {
+            self.passes.image.inputs.mark_current_frame_input(.Cubemap);
         }
     }
 
@@ -1430,6 +1490,9 @@ pub const ActiveToy = struct {
         if (self.passes.buffer4) |pass| {
             this.passes.buffer4 = try pass.clone();
         }
+        if (self.passes.cubemap) |pass| {
+            this.passes.cubemap = try pass.clone();
+        }
 
         return this;
     }
@@ -1440,6 +1503,7 @@ pub const ActiveToy = struct {
         if (self.passes.buffer2) |*buf| buf.deinit();
         if (self.passes.buffer3) |*buf| buf.deinit();
         if (self.passes.buffer4) |*buf| buf.deinit();
+        if (self.passes.cubemap) |*buf| buf.deinit();
     }
 };
 

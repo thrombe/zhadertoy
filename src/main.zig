@@ -252,6 +252,9 @@ pub const Renderer = struct {
         chan2_res: Res = .{},
         chan3_res: Res = .{},
 
+        cubemap_pass: u32 = 0,
+        _pad: Vec3 = .{},
+
         const Res = extern struct {
             x: f32 = 0,
             y: f32 = 0,
@@ -876,6 +879,131 @@ pub const Renderer = struct {
                 self.inputs.release();
             }
         };
+        const CubemapPass = struct {
+            pipeline: *gpu.RenderPipeline,
+            bind_group: struct {
+                current: *gpu.BindGroup,
+                last_frame: *gpu.BindGroup,
+            },
+            bind_group_layout: *gpu.BindGroupLayout,
+            inputs: Pass.Inputs,
+
+            fn init(
+                core_mod: *mach.Core.Mod,
+                at_inputs: *Shadertoy.ActiveToy.Inputs,
+                channels: *Buffers,
+                binding: *Binding,
+                shader: *const Shadertoy.ToyMan.CompiledShader,
+            ) !@This() {
+                const core: *mach.Core = core_mod.state();
+                const device = core.device;
+
+                const height = core_mod.get(core.main_window, .height).?;
+                const width = core_mod.get(core.main_window, .width).?;
+
+                var inputs = Pass.Inputs.init(device, at_inputs, width, height);
+                errdefer inputs.release();
+                var bind = try Pass.create_bind_group(device, binding, channels, &inputs);
+                errdefer {
+                    bind.group1.release();
+                    bind.group2.release();
+                    bind.layout.release();
+                }
+                var pipeline = try Pass.create_pipeline(device, bind.layout, .rgba16_float, shader);
+                errdefer pipeline.release();
+
+                return .{
+                    .inputs = inputs,
+                    .bind_group_layout = bind.layout,
+                    .bind_group = .{
+                        .current = bind.group1,
+                        .last_frame = bind.group2,
+                    },
+                    .pipeline = pipeline,
+                };
+            }
+
+            fn swap(self: *@This()) void {
+                std.mem.swap(*gpu.BindGroup, &self.bind_group.current, &self.bind_group.last_frame);
+            }
+            fn render(self: *@This(), encoder: *gpu.CommandEncoder, target: *gpu.TextureView) void {
+                Pass._render_pass(self.pipeline, self.bind_group.current, encoder, target);
+            }
+
+            fn release(self: *@This()) void {
+                self.bind_group.current.release();
+                self.bind_group.last_frame.release();
+                self.bind_group_layout.release();
+                self.pipeline.release();
+                self.inputs.release();
+            }
+        };
+        const CubeChannel = struct {
+            const Tex = struct {
+                tex: Channel.Tex,
+                render_views: [6]*gpu.TextureView,
+
+                fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
+                    const tex_desc = gpu.Texture.Descriptor.init(.{
+                        .label = label,
+                        .size = size,
+                        .dimension = .dimension_2d,
+                        .usage = .{
+                            .texture_binding = true,
+                            .render_attachment = true,
+                        },
+                        .format = format,
+                    });
+                    const tex = device.createTexture(&tex_desc);
+
+                    var views: [6]*gpu.TextureView = undefined;
+                    for (&views, 0..) |*view, i| {
+                        view.* = tex.createView(&.{
+                            .dimension = .dimension_2d,
+                            .base_array_layer = @intCast(i),
+                            .array_layer_count = 1,
+                        });
+                    }
+
+                    return .{
+                        .render_views = views,
+                        .tex = .{
+                            .texture = tex,
+                            .view = tex.createView(&.{
+                                .dimension = .dimension_cube,
+                            }),
+                        },
+                    };
+                }
+
+                fn release(self: *@This()) void {
+                    for (&self.render_views) |view| {
+                        view.release();
+                    }
+                    self.tex.view.release();
+                    self.tex.texture.release();
+                }
+            };
+
+            current: Tex,
+            last_frame: Tex,
+
+            fn init(device: *gpu.Device, size: gpu.Extent3D, format: gpu.Texture.Format, comptime label: [:0]const u8) @This() {
+                return .{
+                    .current = Tex.init(device, size, format, "current " ++ label),
+                    .last_frame = Tex.init(device, size, format, "last frame " ++ label),
+                };
+            }
+
+            fn swap(self: *@This()) void {
+                std.mem.swap(Tex, &self.current, &self.last_frame);
+            }
+
+            fn release(self: *@This()) void {
+                self.current.release();
+                self.last_frame.release();
+            }
+        };
         const Channel = struct {
             const Tex = struct {
                 texture: *gpu.Texture,
@@ -1062,6 +1190,7 @@ pub const Renderer = struct {
                     if (at.passes.buffer2) |*buf| self.insert_textures(device, queue, &buf.inputs);
                     if (at.passes.buffer3) |*buf| self.insert_textures(device, queue, &buf.inputs);
                     if (at.passes.buffer4) |*buf| self.insert_textures(device, queue, &buf.inputs);
+                    if (at.passes.cubemap) |*buf| self.insert_textures(device, queue, buf);
                     return self;
                 }
 
@@ -1121,7 +1250,7 @@ pub const Renderer = struct {
             bufferB: Channel,
             bufferC: Channel,
             bufferD: Channel,
-            cubemap: Channel,
+            cubemap: CubeChannel,
             keyboard: Channel.Tex,
             sound: Channel.Tex,
             textures: TextureMap,
@@ -1136,11 +1265,11 @@ pub const Renderer = struct {
                     .bufferB = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer B"),
                     .bufferC = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer C"),
                     .bufferD = Channel.init(device, size, .rgba32_float, .dimension_undefined, "buffer D"),
-                    .cubemap = Channel.init(device, .{
+                    .cubemap = CubeChannel.init(device, .{
                         .width = 1024,
                         .height = 1024,
                         .depth_or_array_layers = 6,
-                    }, .rgba16_float, .dimension_cube, "cubemap"),
+                    }, .rgba16_float, "cubemap"),
                     .keyboard = Channel.Tex.init(device, size, .rgba32_float, .dimension_undefined, "keyboard buffer"),
                     .sound = Channel.Tex.init(device, size, .rgba32_float, .dimension_undefined, "sound buffer"),
                     .screen = Sampled.init(device, size, .rgba32_float, "screen buffer"),
@@ -1169,7 +1298,7 @@ pub const Renderer = struct {
                         .BufferB => return &self.bufferB.current,
                         .BufferC => return &self.bufferC.current,
                         .BufferD => return &self.bufferD.current,
-                        .Cubemap => return &self.cubemap.current,
+                        .Cubemap => return &self.cubemap.current.tex,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
@@ -1189,7 +1318,7 @@ pub const Renderer = struct {
                         .BufferB => return &self.bufferB.last_frame,
                         .BufferC => return &self.bufferC.last_frame,
                         .BufferD => return &self.bufferD.last_frame,
-                        .Cubemap => return &self.cubemap.last_frame,
+                        .Cubemap => return &self.cubemap.last_frame.tex,
                     },
                     .keyboard => return &self.keyboard,
                     .music => return &self.sound,
@@ -1214,6 +1343,7 @@ pub const Renderer = struct {
             buffer2: ?Pass = null,
             buffer3: ?Pass = null,
             buffer4: ?Pass = null,
+            cubemap: ?CubemapPass = null,
 
             fn init() !@This() {
                 return .{};
@@ -1226,6 +1356,7 @@ pub const Renderer = struct {
                 if (self.buffer2) |*buf| buf.release();
                 if (self.buffer3) |*buf| buf.release();
                 if (self.buffer4) |*buf| buf.release();
+                if (self.cubemap) |*buf| buf.release();
             }
         },
         buffers: Buffers,
@@ -1308,6 +1439,16 @@ pub const Renderer = struct {
             } else null;
             errdefer if (pass4) |*pass| pass.release();
 
+            var cubemap = if (at.passes.cubemap) |*inp| blk: {
+                const shader = try compiler.ctx.compile(.{
+                    .cubemap = inp,
+                }, at.has_common);
+                defer allocator.free(shader);
+
+                break :blk try CubemapPass.init(core_mod, inp, &buffers, &binding, &.{ .vert = vert, .frag = shader });
+            } else null;
+            errdefer if (cubemap) |*pass| pass.release();
+
             return .{
                 .pass = .{
                     .screen = screen_pass,
@@ -1316,6 +1457,7 @@ pub const Renderer = struct {
                     .buffer2 = pass2,
                     .buffer3 = pass3,
                     .buffer4 = pass4,
+                    .cubemap = cubemap,
                 },
                 .uniforms = uniforms,
                 .binding = binding,
@@ -1363,6 +1505,9 @@ pub const Renderer = struct {
             if (comp.toy.passes.buffer4) |*buf| {
                 new.buffer4 = try Pass.init(core_mod, buf, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.buffer4.? });
             }
+            if (comp.toy.passes.cubemap) |*inp| {
+                new.cubemap = try CubemapPass.init(core_mod, inp, &self.buffers, &self.binding, &.{ .vert = comp.vert, .frag = comp.cubemap.? });
+            }
 
             self.pass.release();
             self.pass = new;
@@ -1388,6 +1533,7 @@ pub const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer2.?.inputs, width, height);
             if (self.pass.buffer3) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer3.?.inputs, width, height);
             if (self.pass.buffer4) |*buf| buf.inputs.uniform.val.update(&at.passes.buffer4.?.inputs, width, height);
+            if (self.pass.cubemap) |*buf| buf.inputs.uniform.val.update(&at.passes.cubemap.?, width, height);
         }
 
         fn swap(self: *@This()) void {
@@ -1400,6 +1546,7 @@ pub const Renderer = struct {
             if (self.pass.buffer2) |*buf| buf.swap();
             if (self.pass.buffer3) |*buf| buf.swap();
             if (self.pass.buffer4) |*buf| buf.swap();
+            if (self.pass.cubemap) |*buf| buf.swap();
         }
 
         fn render(self: *@This(), encoder: *gpu.CommandEncoder, screen_channel: *Channel.Tex, screen: *gpu.TextureView) void {
@@ -1418,6 +1565,13 @@ pub const Renderer = struct {
             if (self.pass.buffer4) |*buf| {
                 buf.inputs.uniform.update(encoder);
                 buf.render(encoder, self.buffers.current_view(buf.output));
+            }
+            if (self.pass.cubemap) |*cm| {
+                for (self.buffers.cubemap.current.render_views, 0..) |view, i| {
+                    cm.inputs.uniform.val.cubemap_pass = @intCast(i);
+                    cm.inputs.uniform.update(encoder);
+                    cm.render(encoder, view);
+                }
             }
             self.pass.image.inputs.uniform.update(encoder);
             self.pass.image.render(encoder, screen_channel.view);
@@ -2050,6 +2204,7 @@ const Gui = struct {
         const toys = [_][*:0]const u8{
             "z:new: new yo",
             "z:nonuniform_control_flow: broken",
+            "z:bad_cubemap: broken cubemap",
             "s:4td3zj: curly stuff",
             "s:lXjyWt: neon blob",
             "s:lX2yDt: earth",
