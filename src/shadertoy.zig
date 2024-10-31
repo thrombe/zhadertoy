@@ -414,65 +414,6 @@ pub const ToyMan = struct {
                 try definitions.append(try allocator.dupe(u8, "ZHADER_COMMON"));
             }
 
-            switch (meta) {
-                .screen => {},
-                .image, .buffer1, .buffer2, .buffer3, .buffer4 => {
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL0"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL1"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL2"));
-                    try definitions.append(try allocator.dupe(u8, "ZHADER_CHANNEL3"));
-                },
-            }
-            switch (meta) {
-                .screen => {},
-                .image, .buffer1, .buffer2, .buffer3, .buffer4 => |inputs| {
-                    for ([_]*const ?ActiveToy.Input{ &inputs.input1, &inputs.input2, &inputs.input3, &inputs.input4 }, 0..) |maybe_inp, i| {
-                        var typ: enum {
-                            d2,
-                            cubemap,
-                            d3,
-                        } = .d2;
-                        if (maybe_inp.*) |inp| {
-                            switch (inp.typ) {
-                                .texture => {
-                                    typ = .d2;
-                                },
-
-                                .writable => |w| switch (w) {
-                                    .Cubemap => {
-                                        typ = .cubemap;
-                                    },
-                                    .BufferA, .BufferB, .BufferC, .BufferD => {
-                                        typ = .d2;
-                                    },
-                                },
-                                .cubemap => {
-                                    typ = .cubemap;
-                                },
-                                .volume => {
-                                    typ = .d3;
-                                },
-
-                                // TODO:
-                                .keyboard, .mic, .webcam, .video, .music => {},
-                            }
-                        }
-
-                        switch (typ) {
-                            .d2 => {
-                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_2D", .{i}));
-                            },
-                            .d3 => {
-                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_3D", .{i}));
-                            },
-                            .cubemap => {
-                                try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_CHANNEL{d}_CUBEMAP", .{i}));
-                            },
-                        }
-                    }
-                },
-            }
-
             // TODO: cubemap pass not implemented.
             // i can't find many cubemap pass shaders to test :/
             try definitions.append(try std.fmt.allocPrint(allocator, "ZHADER_INCLUDE_{s}", .{switch (meta) {
