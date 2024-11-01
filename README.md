@@ -1,5 +1,5 @@
 # Zhadertoy
-Welcome to Zhadertoy! This is a shader playground inspired by Shadertoy, built to help me dive deeper into graphics programming. After working on projects like [fracGen_gpu](https://github.com/thrombe/fracGen_gpu) and [smoxel](https://github.com/thrombe/smoxel), I wanted a more flexible space for experimentation. My goal is to make a good and convenient shader playground that includes support for shadertoy shader and does more when needed, so I can seamlessly port my earlier work and develop new ideas.
+Welcome to Zhadertoy! This is a shader playground inspired by Shadertoy, built to help me dive deeper into graphics programming. After working on projects like [fracGen_gpu](https://github.com/thrombe/fracGen_gpu) and [smoxel](https://github.com/thrombe/smoxel), I wanted a more flexible space for experimentation. My goal is to make a good and convenient shader playground that includes support for shadertoy shaders and does more when needed. so I can seamlessly port my earlier work and develop new ideas.
 
 ![zhadertoy screenshot](./screenshots/s1.jpeg)
 
@@ -21,8 +21,7 @@ Zhadertoy organizes shaders in the `./toys` directory. Shadertoy shaders are dow
 
 #### Generated Files:
 `frag.glsl`, `vert.glsl`, `generated_*.glsl`
-
-`generated_.*.glsl`: glue code for compatibility between Vulkan GLSL (used by Zhadertoy) and OpenGL GLSL (used by Shadertoy). While not meant for direct editing, you can if you really want to.
+These files contain code needed to run multiple shader passes, provide the correct inputs for shadertoy shaders and some glue code for compatibility between Vulkan GLSL (used by Zhadertoy) and OpenGL GLSL (used by Shadertoy). While not meant for direct editing, you can if you really want to.
 
 ## Render Order
 The render order is as follows:
