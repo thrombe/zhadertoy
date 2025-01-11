@@ -771,6 +771,7 @@ pub const ToyMan = struct {
 
             const c = self.channels;
             try Typ.d2.function(w, c, .float, .texture, &[_]Arg{.vec2pos}, .vec4);
+            try Typ.d2.function(w, c, .float, .texture, &[_]Arg{ .vec2pos, .floatlod }, .vec4);
             try Typ.cube.function(w, c, .float, .texture, &[_]Arg{.vec3pos}, .vec4);
             // TODO: i think volumes don't have vflip applied on shadertoy even if it is present in json
             try Typ.d3.function(w, c, .none, .texture, &[_]Arg{.vec3pos}, .vec4);
